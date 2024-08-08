@@ -25,15 +25,17 @@ interface AudioDevice {
 
 function WebAudioExplorer() {
     const [isListening, setIsListening] = useState<boolean>(false);
-    
+
     // In decibels
     const [volume, setVolume] = useState<number>(-Infinity);
-    
+
     // Can't be altered while audio context is listening
     const [silenceThreshold, setSilenceThreshold] = useState<number>(-50);
 
+    // In milliseconds
     const [silenceDuration, setSilenceDuration] = useState<number>(1000);
     const [shortBreakDuration, setShortBreakDuration] = useState<number>(300);
+    
     const [isSilent, setIsSilent] = useState<boolean>(true);
     const [audioDevices, setAudioDevices] = useState<AudioDevice[]>([]);
     const [selectedDevice, setSelectedDevice] = useState<string>('');
@@ -53,7 +55,14 @@ function WebAudioExplorer() {
         };
     }, []);
 
-    /* Get a list of available audio input devices */
+    /**
+     * Retrieves a list of available audio input devices.
+     * Filters the devices to include only audio input devices and updates the state with the list.
+     * Sets the first available audio input device as the selected device.
+     * 
+     * @returns {Promise<void>} A promise that resolves when the audio devices are successfully retrieved and set.
+     * @throws Will throw an error if there is an issue accessing the audio devices.
+     */
     async function getAudioDevices(): Promise<void> {
         try {
             const devices = await navigator.mediaDevices.enumerateDevices();
@@ -70,6 +79,15 @@ function WebAudioExplorer() {
         }
     }
 
+    /**
+     * Starts capturing audio from the selected audio input device.
+     * Initializes the audio context, analyser, and media recorder.
+     * Sets up the analyser to process audio data and starts the media recorder to collect audio data every 100ms.
+     * Updates the state to indicate that audio capture has started.
+     * 
+     * @returns {Promise<void>} A promise that resolves when audio capture starts successfully.
+     * @throws Will throw an error if accessing the microphone fails.
+     */
     async function startListening(): Promise<void> {
         try {
             console.log('Starting audio capture...');
@@ -96,6 +114,11 @@ function WebAudioExplorer() {
         }
     }
 
+    /**
+     * Stops capturing audio and cleans up resources.
+     * Closes the audio context, cancels any ongoing animation frames, and stops the media recorder.
+     * Updates the state to indicate that audio capture has stopped and resets the volume.
+     */
     function stopListening(): void {
         console.log('Stopping audio capture...');
         if (audioContext.current) {
@@ -114,6 +137,12 @@ function WebAudioExplorer() {
         console.log('Audio capture stopped');
     }
 
+    /**
+     * Analyzes the audio data to determine the current volume level and detect periods of silence.
+     * Updates the volume state and checks if the volume is below the silence threshold.
+     * If a short break or long silence is detected, it triggers the appropriate handlers.
+     * Continuously requests animation frames to keep checking the audio data.
+     */
     function checkAudio(): void {
         if (!analyser.current || !dataArray.current) return;
 

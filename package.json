@@ -9,11 +9,15 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@ai-sdk/google": "^0.0.33",
+    "@ai-sdk/openai": "^0.0.43",
     "@nextui-org/react": "^2.4.6",
+    "ai": "^3.3.3",
     "next": "14.2.5",
     "react": "^18",
     "react-dom": "^18",
-    "react-speakup": "^1.0.0"
+    "react-speakup": "^1.0.0",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/dom-speech-recognition": "^0.0.4",
