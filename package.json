@@ -11,8 +11,13 @@
   "dependencies": {
     "@ai-sdk/google": "^0.0.33",
     "@ai-sdk/openai": "^0.0.43",
+    "@google-cloud/speech": "^6.7.0",
+    "@grpc/grpc-js": "^1.11.1",
     "@nextui-org/react": "^2.4.6",
     "ai": "^3.3.3",
+    "dotenv": "^16.4.5",
+    "google-auth-library": "^9.13.0",
+    "googleapis": "^140.0.1",
     "next": "14.2.5",
     "react": "^18",
     "react-dom": "^18",

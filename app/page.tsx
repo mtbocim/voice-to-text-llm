@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useRef, useEffect } from 'react';
+import getVoiceTranscription from '@/actions/getVoiceTranscription';
 
 interface AudioContextRef {
     current: AudioContext | null;
@@ -145,12 +146,11 @@ function WebAudioExplorer() {
      */
     function checkAudio(): void {
         if (!analyser.current || !dataArray.current) return;
-
         analyser.current.getFloatTimeDomainData(dataArray.current);
         const rms: number = Math.sqrt(dataArray.current.reduce((sum, val) => sum + val * val, 0) / dataArray.current.length);
         const dbFS: number = 20 * Math.log10(rms);
         setVolume(dbFS);
-        console.log("what is the volume", dbFS, "what is the silence threshold", silenceThreshold);
+        console.log("what is the volume", dbFS, "what is the silence threshold", silenceThreshold, audioChunks.current.length);
         if (dbFS < silenceThreshold) {
             if (!silenceStartTime.current) {
                 silenceStartTime.current = Date.now();
@@ -158,8 +158,9 @@ function WebAudioExplorer() {
                 const silenceDurationMs = Date.now() - silenceStartTime.current;
                 if (silenceDurationMs > shortBreakDuration) {
                     console.log('Short break detected, processing audio chunk...', silenceDurationMs, shortBreakDuration);
-                    handleShortBreak();
                     setIsSilent(true);
+                    if (audioChunks.current.length === 0) return;
+                    handleShortBreak();
                 }
                 if (silenceDurationMs > silenceDuration) {
                     handleLongSilence();
@@ -182,6 +183,7 @@ function WebAudioExplorer() {
     function handleShortBreak(): void {
         // console.log('Short break detected, processing audio chunk...');
         // Placeholder for sending audio chunk for processing
+        console.log(audioChunks.current)
         const audioBlob = new Blob(audioChunks.current, { type: 'audio/webm' });
         sendAudioChunkForProcessing(audioBlob);
         audioChunks.current = []; // Clear the chunks after processing
@@ -198,9 +200,15 @@ function WebAudioExplorer() {
         // This is where you would send the audio chunk to your backend for processing
         audioBlob?.size > 0 && console.log('Sending audio chunk for processing, size:', audioBlob.size, 'bytes');
         // Example of how you might send this to a backend:
-        // const formData = new FormData();
-        // formData.append('audio', audioBlob, 'audio.webm');
-        // await fetch('/api/process-audio-chunk', { method: 'POST', body: formData });
+        const reader = new FileReader()
+        reader.readAsArrayBuffer(audioBlob)
+        reader.onloadend = async function () {
+            let buffer = reader.result;
+            let base64data = btoa(String.fromCharCode.apply(null, new Uint8Array(buffer)));
+            const formData = new FormData();
+            formData.append('audio', base64data);
+            await getVoiceTranscription(formData)
+        }
     }
 
     // Placeholder function for processing entire transcription
