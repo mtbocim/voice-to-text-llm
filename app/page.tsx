@@ -1,113 +1,274 @@
-import Image from "next/image";
+'use client'
 
-export default function Home() {
-  return (
-    <main className="flex min-h-screen flex-col items-center justify-between p-24">
-      <div className="z-10 w-full max-w-5xl items-center justify-between font-mono text-sm lg:flex">
-        <p className="fixed left-0 top-0 flex w-full justify-center border-b border-gray-300 bg-gradient-to-b from-zinc-200 pb-6 pt-8 backdrop-blur-2xl dark:border-neutral-800 dark:bg-zinc-800/30 dark:from-inherit lg:static lg:w-auto  lg:rounded-xl lg:border lg:bg-gray-200 lg:p-4 lg:dark:bg-zinc-800/30">
-          Get started by editing&nbsp;
-          <code className="font-mono font-bold">app/page.tsx</code>
-        </p>
-        <div className="fixed bottom-0 left-0 flex h-48 w-full items-end justify-center bg-gradient-to-t from-white via-white dark:from-black dark:via-black lg:static lg:size-auto lg:bg-none">
-          <a
-            className="pointer-events-none flex place-items-center gap-2 p-8 lg:pointer-events-auto lg:p-0"
-            href="https://vercel.com?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            By{" "}
-            <Image
-              src="/vercel.svg"
-              alt="Vercel Logo"
-              className="dark:invert"
-              width={100}
-              height={24}
-              priority
-            />
-          </a>
-        </div>
-      </div>
+import React, { useState, useRef, useEffect } from 'react';
 
-      <div className="relative z-[-1] flex place-items-center before:absolute before:h-[300px] before:w-full before:-translate-x-1/2 before:rounded-full before:bg-gradient-radial before:from-white before:to-transparent before:blur-2xl before:content-[''] after:absolute after:-z-20 after:h-[180px] after:w-full after:translate-x-1/3 after:bg-gradient-conic after:from-sky-200 after:via-blue-200 after:blur-2xl after:content-[''] before:dark:bg-gradient-to-br before:dark:from-transparent before:dark:to-blue-700 before:dark:opacity-10 after:dark:from-sky-900 after:dark:via-[#0141ff] after:dark:opacity-40 sm:before:w-[480px] sm:after:w-[240px] before:lg:h-[360px]">
-        <Image
-          className="relative dark:drop-shadow-[0_0_0.3rem_#ffffff70] dark:invert"
-          src="/next.svg"
-          alt="Next.js Logo"
-          width={180}
-          height={37}
-          priority
-        />
-      </div>
-
-      <div className="mb-32 grid text-center lg:mb-0 lg:w-full lg:max-w-5xl lg:grid-cols-4 lg:text-left">
-        <a
-          href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className="mb-3 text-2xl font-semibold">
-            Docs{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className="m-0 max-w-[30ch] text-sm opacity-50">
-            Find in-depth information about Next.js features and API.
-          </p>
-        </a>
-
-        <a
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className="mb-3 text-2xl font-semibold">
-            Learn{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className="m-0 max-w-[30ch] text-sm opacity-50">
-            Learn about Next.js in an interactive course with&nbsp;quizzes!
-          </p>
-        </a>
-
-        <a
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className="mb-3 text-2xl font-semibold">
-            Templates{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className="m-0 max-w-[30ch] text-sm opacity-50">
-            Explore starter templates for Next.js.
-          </p>
-        </a>
-
-        <a
-          href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className="mb-3 text-2xl font-semibold">
-            Deploy{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className="m-0 max-w-[30ch] text-balance text-sm opacity-50">
-            Instantly deploy your Next.js site to a shareable URL with Vercel.
-          </p>
-        </a>
-      </div>
-    </main>
-  );
+interface AudioContextRef {
+    current: AudioContext | null;
 }
+
+interface AnalyserNodeRef {
+    current: AnalyserNode | null;
+}
+
+interface Float32ArrayRef {
+    current: Float32Array | null;
+}
+
+interface NumberRef {
+    current: number | null;
+}
+
+interface AudioDevice {
+    deviceId: string;
+    label: string;
+}
+
+function WebAudioExplorer() {
+    const [isListening, setIsListening] = useState<boolean>(false);
+    
+    // In decibels
+    const [volume, setVolume] = useState<number>(-Infinity);
+    
+    // Can't be altered while audio context is listening
+    const [silenceThreshold, setSilenceThreshold] = useState<number>(-50);
+
+    const [silenceDuration, setSilenceDuration] = useState<number>(1000);
+    const [shortBreakDuration, setShortBreakDuration] = useState<number>(300);
+    const [isSilent, setIsSilent] = useState<boolean>(true);
+    const [audioDevices, setAudioDevices] = useState<AudioDevice[]>([]);
+    const [selectedDevice, setSelectedDevice] = useState<string>('');
+
+    const audioContext: AudioContextRef = useRef(null);
+    const analyser: AnalyserNodeRef = useRef(null);
+    const dataArray: Float32ArrayRef = useRef(null);
+    const silenceStartTime: NumberRef = useRef(null);
+    const animationFrame: NumberRef = useRef(null);
+    const mediaRecorder: React.MutableRefObject<MediaRecorder | null> = useRef(null);
+    const audioChunks: React.MutableRefObject<Blob[]> = useRef([]);
+
+    useEffect(() => {
+        getAudioDevices();
+        return () => {
+            stopListening();
+        };
+    }, []);
+
+    /* Get a list of available audio input devices */
+    async function getAudioDevices(): Promise<void> {
+        try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const audioInputs = devices
+                .filter(device => device.kind === 'audioinput')
+                .map(device => ({ deviceId: device.deviceId, label: device.label || `Microphone ${device.deviceId.slice(0, 5)}` }));
+            setAudioDevices(audioInputs);
+            if (audioInputs.length > 0) {
+                setSelectedDevice(audioInputs[0].deviceId);
+            }
+            console.log('Available audio input devices:', audioInputs);
+        } catch (error) {
+            console.error('Error getting audio devices:', error);
+        }
+    }
+
+    async function startListening(): Promise<void> {
+        try {
+            console.log('Starting audio capture...');
+            const stream = await navigator.mediaDevices.getUserMedia({
+                audio: { deviceId: selectedDevice ? { exact: selectedDevice } : undefined }
+            });
+            audioContext.current = new (window.AudioContext || window.webkitAudioContext)();
+            analyser.current = audioContext.current.createAnalyser();
+            const source: MediaStreamAudioSourceNode = audioContext.current.createMediaStreamSource(stream);
+            source.connect(analyser.current);
+
+            analyser.current.fftSize = 2048;
+            dataArray.current = new Float32Array(analyser.current.fftSize);
+
+            mediaRecorder.current = new MediaRecorder(stream);
+            mediaRecorder.current.ondataavailable = handleDataAvailable;
+            mediaRecorder.current.start(100); // Collect data every 100ms
+
+            setIsListening(true);
+            checkAudio();
+            console.log('Audio capture started successfully');
+        } catch (error) {
+            console.error('Error accessing microphone:', error);
+        }
+    }
+
+    function stopListening(): void {
+        console.log('Stopping audio capture...');
+        if (audioContext.current) {
+            audioContext.current.close();
+            audioContext.current = null;
+        }
+        if (animationFrame.current) {
+            cancelAnimationFrame(animationFrame.current);
+        }
+        if (mediaRecorder.current) {
+            mediaRecorder.current.stop();
+        }
+        setIsListening(false);
+        setVolume(-Infinity);
+        setIsSilent(true);
+        console.log('Audio capture stopped');
+    }
+
+    function checkAudio(): void {
+        if (!analyser.current || !dataArray.current) return;
+
+        analyser.current.getFloatTimeDomainData(dataArray.current);
+        const rms: number = Math.sqrt(dataArray.current.reduce((sum, val) => sum + val * val, 0) / dataArray.current.length);
+        const dbFS: number = 20 * Math.log10(rms);
+        setVolume(dbFS);
+        console.log("what is the volume", dbFS, "what is the silence threshold", silenceThreshold);
+        if (dbFS < silenceThreshold) {
+            if (!silenceStartTime.current) {
+                silenceStartTime.current = Date.now();
+            } else {
+                const silenceDurationMs = Date.now() - silenceStartTime.current;
+                if (silenceDurationMs > shortBreakDuration) {
+                    console.log('Short break detected, processing audio chunk...', silenceDurationMs, shortBreakDuration);
+                    handleShortBreak();
+                    setIsSilent(true);
+                }
+                if (silenceDurationMs > silenceDuration) {
+                    handleLongSilence();
+                }
+            }
+        } else {
+            silenceStartTime.current = null;
+            setIsSilent(false);
+        }
+
+        animationFrame.current = requestAnimationFrame(checkAudio);
+    }
+
+    function handleDataAvailable(event: BlobEvent): void {
+        if (event.data.size > 0) {
+            audioChunks.current.push(event.data);
+        }
+    }
+
+    function handleShortBreak(): void {
+        // console.log('Short break detected, processing audio chunk...');
+        // Placeholder for sending audio chunk for processing
+        const audioBlob = new Blob(audioChunks.current, { type: 'audio/webm' });
+        sendAudioChunkForProcessing(audioBlob);
+        audioChunks.current = []; // Clear the chunks after processing
+    }
+
+    function handleLongSilence(): void {
+        // console.log('Long silence detected, processing entire transcription...');
+        // Placeholder for processing entire transcription
+        processEntireTranscription();
+    }
+
+    // Placeholder function for sending audio chunk for processing
+    async function sendAudioChunkForProcessing(audioBlob: Blob): Promise<void> {
+        // This is where you would send the audio chunk to your backend for processing
+        audioBlob?.size > 0 && console.log('Sending audio chunk for processing, size:', audioBlob.size, 'bytes');
+        // Example of how you might send this to a backend:
+        // const formData = new FormData();
+        // formData.append('audio', audioBlob, 'audio.webm');
+        // await fetch('/api/process-audio-chunk', { method: 'POST', body: formData });
+    }
+
+    // Placeholder function for processing entire transcription
+    async function processEntireTranscription(): Promise<void> {
+        // This is where you would send the entire transcription to an LLM for processing
+        // console.log('Processing entire transcription...');
+        // Example of how you might do this:
+        // const transcription = await getFullTranscription();
+        // const response = await fetch('/api/process-transcription', {
+        //   method: 'POST',
+        //   headers: { 'Content-Type': 'application/json' },
+        //   body: JSON.stringify({ transcription })
+        // });
+        // const result = await response.json();
+        // console.log('LLM response:', result);
+    }
+
+    return (
+        <div className="p-4 max-w-md mx-auto">
+            <h1 className="text-2xl font-bold mb-4">Web Audio API Explorer</h1>
+            <div className="mb-4">
+                <label className="block mb-2">Select Audio Input:</label>
+                <select
+                    value={selectedDevice}
+                    onChange={(e) => setSelectedDevice(e.target.value)}
+                    className="w-full p-2 border rounded"
+                >
+                    {audioDevices.map((device) => (
+                        <option key={device.deviceId} value={device.deviceId}>
+                            {device.label}
+                        </option>
+                    ))}
+                </select>
+            </div>
+            <button
+                className={`px-4 py-2 rounded ${isListening ? 'bg-red-500' : 'bg-green-500'} text-white mb-4`}
+                onClick={isListening ? stopListening : startListening}
+            >
+                {isListening ? 'Stop Listening' : 'Start Listening'}
+            </button>
+            <div className="mb-4">
+                <label className="block mb-2">
+                    Current Volume: {volume === -Infinity ? '-∞' : volume.toFixed(2)} dB
+                </label>
+                <div className="w-full bg-gray-200 rounded-full h-2.5">
+                    <div
+                        className="bg-blue-600 h-2.5 rounded-full"
+                        style={{ width: `${Math.max(0, (volume + 100) / 100 * 100)}%` }}
+                    ></div>
+                </div>
+            </div>
+            <div className="mb-4">
+                <label className="block mb-2">
+                    Silence Threshold: {silenceThreshold} dB
+                </label>
+                <input
+                    type="range"
+                    min="-100"
+                    max="0"
+                    value={silenceThreshold}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSilenceThreshold(Number(e.target.value))}
+                    className="w-full"
+                />
+            </div>
+            <div className="mb-4">
+                <label className="block mb-2">
+                    Long Silence Duration: {silenceDuration} ms
+                </label>
+                <input
+                    type="range"
+                    min="100"
+                    max="5000"
+                    step="100"
+                    value={silenceDuration}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSilenceDuration(Number(e.target.value))}
+                    className="w-full"
+                />
+            </div>
+            <div className="mb-4">
+                <label className="block mb-2">
+                    Short Break Duration: {shortBreakDuration} ms
+                </label>
+                <input
+                    type="range"
+                    min="100"
+                    max="1000"
+                    step="50"
+                    value={shortBreakDuration}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setShortBreakDuration(Number(e.target.value))}
+                    className="w-full"
+                />
+            </div>
+            <div className={`p-4 rounded ${isSilent ? 'bg-red-200' : 'bg-green-200'}`}>
+                {isSilent ? 'Silence Detected' : 'Audio Detected'}
+            </div>
+        </div>
+    );
+};
+
+export default WebAudioExplorer;
