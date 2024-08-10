@@ -1,8 +1,8 @@
 'use client'
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, use } from 'react';
 import getVoiceTranscription from '@/actions/getVoiceTranscription';
-import { set } from 'zod';
+import getTranscriptionResponse from '@/actions/getTranscriptionResponse';
 
 interface AudioContextRef {
     current: AudioContext | null;
@@ -35,8 +35,10 @@ const AdvancedAudioRecorder: React.FC = () => {
     const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
     const [selectedDevice, setSelectedDevice] = useState<string>('');
     const [transcription, setTranscription] = useState<string>('');
+    const [sendTranscript, setSendTranscript] = useState<boolean>(false);
 
     const isRecordingRef = useRef(false);
+    // const transcriptionRef = useRef('');
     const audioContext: AudioContextRef = useRef(null);
     const analyser: AnalyserNodeRef = useRef(null);
     const mediaRecorder: MediaRecorderRef = useRef(null);
@@ -57,6 +59,18 @@ const AdvancedAudioRecorder: React.FC = () => {
     useEffect(() => {
         isRecordingRef.current = isRecording;
     }, [isRecording]);
+
+    // useEffect(() => {
+    //     transcriptionRef.current = transcription;
+    // }, [transcription]);
+
+    useEffect(() => {
+        if (sendTranscript) {
+            console.log('Sending transcript:', transcription);
+            handleLongSilence(transcription);
+            setSendTranscript(false);
+        }
+    }, [sendTranscript, transcription]);
 
     async function loadAudioDevices(): Promise<void> {
         try {
@@ -132,12 +146,7 @@ const AdvancedAudioRecorder: React.FC = () => {
             // console.log('Silence detected');
             if (!silenceStartTime.current) {
                 console.log('Setting silence start time');
-                silenceStartTime.current = Date.now();
-
-                if (isRecordingRef.current) {
-                    console.log('Starting long silence timer');
-                    longSilenceTimer.current = setTimeout(handleLongSilence, longSilenceDuration);
-                }
+                silenceStartTime.current = Date.now();                    
             } else {
                 const silenceDuration = Date.now() - silenceStartTime.current;
                 // console.log('Handling short silence', silenceDuration, shortSilenceDuration, isRecordingRef.current);
@@ -145,10 +154,13 @@ const AdvancedAudioRecorder: React.FC = () => {
                     console.log('Stopping recording due to short silence');
                     stopRecording();
                     setIsRecording(false);
+                    console.log('Starting long silence timer');
+                    longSilenceTimer.current = setTimeout(()=>setSendTranscript(true), longSilenceDuration);
                 }
             }
             setIsSilent(true);
         } else {
+            // Still talking, don't want to process
             if (silenceStartTime.current) {
                 silenceStartTime.current = null;
                 if (longSilenceTimer.current) {
@@ -156,21 +168,24 @@ const AdvancedAudioRecorder: React.FC = () => {
                 }
             }
             setIsSilent(false);
+            // Start recording if not already recording
             if (!isRecordingRef.current) {
                 setIsRecording(true);
             }
         }
 
         animationFrame.current = requestAnimationFrame(checkAudio);
-    }, [silenceThreshold, shortSilenceDuration, longSilenceDuration]);
+    }, [silenceThreshold, shortSilenceDuration, longSilenceDuration, transcription]);
 
-    // This starts recorder correctly, don't change for now!!! (2:58pm)
+    // This starts recorder correctly, don't change for now!!!
     useEffect(() => {
         console.log("what is state", mediaRecorder.current?.state)
         if (isRecording && mediaRecorder.current?.state === undefined) {
             startRecording();
         }
     }, [isRecording]);
+
+   
 
 
 
@@ -201,32 +216,37 @@ const AdvancedAudioRecorder: React.FC = () => {
     async function handleRecordingStop(): void {
         if (audioChunk.current) {
             console.log('Processing audio chunk...');
-            // TODO: Send audioChunk.current to voice-to-text API
-            // Example: sendAudioForProcessing(audioChunk.current);
-            // const audioBlob = new Blob(audioChunk.current.chunks, { type: 'audio/webm' });
 
             const formData = new FormData();
             formData.append('file', audioChunk.current, 'audio.webm');
             formData.append('model', 'whisper-1');
             const results = await getVoiceTranscription(formData);
             setTranscription((prev) => prev + ' ' + results);
-            console.log('Transcription:', transcription);
 
         }
         mediaRecorder.current = null;
-        // Clear the long silence timer if it's still running
-        if (longSilenceTimer.current) {
-            clearTimeout(longSilenceTimer.current);
-        }
+        // // Clear the long silence timer if it's still running
+        // if (longSilenceTimer.current) {
+        //     clearTimeout(longSilenceTimer.current);
+        // }
     }
 
-    function handleLongSilence(): void {
-        console.log('Long silence detected. Sending full transcription for processing.');
+    // const handleLongSilence = useCallback(
+    async function handleLongSilence(t): void {
+        console.log('Long silence detected. Sending full transcription for processing.', t);
+        const result = await getTranscriptionResponse(transcription);
+
+        setTranscription('')
+        const audioSrc = 'data:audio/mp3;base64,' + result;
+        const audio = new Audio(audioSrc);
+        console.log('Audio received and parsed', new Date());
+        audio.play();
         // TODO: Implement logic to send full transcription for LLM processing
         // This could involve collecting all processed text from short silence handlers
         // and sending it to a server for LLM analysis
         // Example: sendTranscriptionForLLMProcessing(collectedTranscriptions);
     }
+    // , [transcription]);
 
     return (
         <div className="p-4 max-w-md mx-auto">
@@ -309,6 +329,7 @@ const AdvancedAudioRecorder: React.FC = () => {
             <div className={`p-4 rounded mt-4 ${isRecording ? 'bg-yellow-200' : 'bg-gray-200'}`}>
                 Recording Status: {isRecording ? 'Recording' : 'Not Recording'}
             </div>
+            <div>{transcription}</div>
         </div>
     );
 };
