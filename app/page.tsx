@@ -1,5 +1,15 @@
 'use client'
 
+//TODO:
+/*
+    Test pitch shifted audio for better recognition
+    Handle a pause in speech gracefully, shouldn't cutout the audio
+    Have long silence timer start at same time as short silence timer
+    Don't process transcript if getting STT data
+    New STT can't happen until transcript response playback starts
+
+*/
+
 import React, { useState, useRef, useEffect, useCallback, use } from 'react';
 import getVoiceTranscription from '@/actions/getVoiceTranscription';
 import getTranscriptionResponse from '@/actions/getTranscriptionResponse';
@@ -32,13 +42,15 @@ const AdvancedAudioRecorder: React.FC = () => {
     const [shortSilenceDuration, setShortSilenceDuration] = useState<number>(500);
     const [longSilenceDuration, setLongSilenceDuration] = useState<number>(2000);
     const [isSilent, setIsSilent] = useState<boolean>(true);
-    const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
-    const [selectedDevice, setSelectedDevice] = useState<string>('');
+    const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
+    const [audioOutputs, setAudioOutputs] = useState<MediaDeviceInfo[]>([])
+    const [selectedInput, setSelectedInput] = useState<string>('');
+    const [selectedOutput, setSelectedOutput] = useState<string>('');
     const [transcription, setTranscription] = useState<string>('');
     const [sendTranscript, setSendTranscript] = useState<boolean>(false);
+    const [gettingTransciptData, setGettingTransciptData] = useState<boolean>(false);
 
     const isRecordingRef = useRef(false);
-    // const transcriptionRef = useRef('');
     const audioContext: AudioContextRef = useRef(null);
     const analyser: AnalyserNodeRef = useRef(null);
     const mediaRecorder: MediaRecorderRef = useRef(null);
@@ -48,6 +60,7 @@ const AdvancedAudioRecorder: React.FC = () => {
     const audioChunk = useRef<Blob | null>(null);
     const stream = useRef<MediaStream | null>(null);
     const longSilenceTimer = useRef<NodeJS.Timeout | null>(null);
+    const transcriptRef = useRef<string>('');
 
     useEffect(() => {
         loadAudioDevices();
@@ -61,24 +74,30 @@ const AdvancedAudioRecorder: React.FC = () => {
     }, [isRecording]);
 
     // useEffect(() => {
-    //     transcriptionRef.current = transcription;
+    //     transcriptRef.current = transcription;
     // }, [transcription]);
 
+
+    // TODO: Improve this to honor the time better
+    // Add state for if waiting for STT data to block getting full response
     useEffect(() => {
-        if (sendTranscript) {
+        console.log('Does gettingTransciptData actually block?', gettingTransciptData);
+        if (sendTranscript && !gettingTransciptData && transcription.length > 0) {
             console.log('Sending transcript:', transcription);
             handleLongSilence(transcription);
             setSendTranscript(false);
         }
-    }, [sendTranscript, transcription]);
+    }, [sendTranscript, transcription, gettingTransciptData]);
 
     async function loadAudioDevices(): Promise<void> {
         try {
             const devices = await navigator.mediaDevices.enumerateDevices();
             const audioInputs = devices.filter(device => device.kind === 'audioinput');
-            setAudioDevices(audioInputs);
+            const audioOutputs = devices.filter(device => device.kind === 'audiooutput')
+            setAudioInputs(audioInputs);
+            setAudioOutputs(audioOutputs)
             if (audioInputs.length > 0) {
-                setSelectedDevice(audioInputs[0].deviceId);
+                setSelectedInput(audioInputs[0].deviceId);
             }
             console.log('Audio devices loaded:', audioInputs);
         } catch (error) {
@@ -86,11 +105,13 @@ const AdvancedAudioRecorder: React.FC = () => {
         }
     }
 
+
+
     async function startListening(): Promise<void> {
         try {
             console.log('Starting to listen...');
             stream.current = await navigator.mediaDevices.getUserMedia({
-                audio: { deviceId: selectedDevice ? { exact: selectedDevice } : undefined }
+                audio: { deviceId: selectedInput ? { exact: selectedInput } : undefined }
             });
             audioContext.current = new (window.AudioContext || window.webkitAudioContext)();
             analyser.current = audioContext.current.createAnalyser();
@@ -142,25 +163,28 @@ const AdvancedAudioRecorder: React.FC = () => {
         const dbFS: number = 20 * Math.log10(rms);
         setVolume(dbFS);
 
+
+        // TODO: Clarify what happens during silence
+
         if (dbFS < silenceThreshold) {
-            // console.log('Silence detected');
+            // Set silence start time if not already set
             if (!silenceStartTime.current) {
                 console.log('Setting silence start time');
                 silenceStartTime.current = Date.now();                    
+                console.log('Starting long silence timer');
+                longSilenceTimer.current = setTimeout(()=>setSendTranscript(true), longSilenceDuration);
             } else {
                 const silenceDuration = Date.now() - silenceStartTime.current;
-                // console.log('Handling short silence', silenceDuration, shortSilenceDuration, isRecordingRef.current);
+
                 if (silenceDuration > shortSilenceDuration && isRecordingRef.current) {
                     console.log('Stopping recording due to short silence');
                     stopRecording();
                     setIsRecording(false);
-                    console.log('Starting long silence timer');
-                    longSilenceTimer.current = setTimeout(()=>setSendTranscript(true), longSilenceDuration);
                 }
             }
             setIsSilent(true);
         } else {
-            // Still talking, don't want to process
+            // Still talking, don't want to process transcript yet
             if (silenceStartTime.current) {
                 silenceStartTime.current = null;
                 if (longSilenceTimer.current) {
@@ -170,6 +194,7 @@ const AdvancedAudioRecorder: React.FC = () => {
             setIsSilent(false);
             // Start recording if not already recording
             if (!isRecordingRef.current) {
+                startRecording();
                 setIsRecording(true);
             }
         }
@@ -178,12 +203,12 @@ const AdvancedAudioRecorder: React.FC = () => {
     }, [silenceThreshold, shortSilenceDuration, longSilenceDuration, transcription]);
 
     // This starts recorder correctly, don't change for now!!!
-    useEffect(() => {
-        console.log("what is state", mediaRecorder.current?.state)
-        if (isRecording && mediaRecorder.current?.state === undefined) {
-            startRecording();
-        }
-    }, [isRecording]);
+    // useEffect(() => {
+    //     // console.log("what is state", mediaRecorder.current?.state)
+    //     if (isRecording && mediaRecorder.current?.state === undefined) {
+    //         startRecording();
+    //     }
+    // }, [isRecording]);
 
    
 
@@ -213,40 +238,52 @@ const AdvancedAudioRecorder: React.FC = () => {
         }
     }
 
+    
+    // When called creates a closure, can't see current variable data
     async function handleRecordingStop(): void {
         if (audioChunk.current) {
-            console.log('Processing audio chunk...');
+            console.log('Processing audio chunk');
+            
+            // Keep this for checking audio data quality
+            // const audioBuffer = await audioChunk.current.arrayBuffer();
+            // const buffer = Buffer.from(audioBuffer);
+            // const audio = new Audio('data:audio/webm;base64,' + buffer.toString('base64'));
+            // audio.play();
 
+            setGettingTransciptData(true);
             const formData = new FormData();
             formData.append('file', audioChunk.current, 'audio.webm');
             formData.append('model', 'whisper-1');
+            formData.append('previousTranscript', transcriptRef.current);
             const results = await getVoiceTranscription(formData);
             setTranscription((prev) => prev + ' ' + results);
+            transcriptRef.current = results;
+            setGettingTransciptData(false);
 
         }
         mediaRecorder.current = null;
-        // // Clear the long silence timer if it's still running
-        // if (longSilenceTimer.current) {
-        //     clearTimeout(longSilenceTimer.current);
-        // }
     }
 
-    // const handleLongSilence = useCallback(
     async function handleLongSilence(t): void {
-        console.log('Long silence detected. Sending full transcription for processing.', t);
-        const result = await getTranscriptionResponse(transcription);
-
+        const start = new Date();
+        console.log('Long silence detected. Sending full transcription for processing.');
+        // const result = await getTranscriptionResponse(transcription);
+        // console.log('Transcription response received:');
+        // const end = new Date();
+        // playAudio(result)
+        // console.log('Time taken:', end - start, 'ms');
+        
         setTranscription('')
-        const audioSrc = 'data:audio/mp3;base64,' + result;
+        transcriptRef.current = ''
+    }
+
+    function playAudio(audioData:string){
+        const audioSrc = 'data:audio/webm;base64,' + audioData;
         const audio = new Audio(audioSrc);
         console.log('Audio received and parsed', new Date());
         audio.play();
-        // TODO: Implement logic to send full transcription for LLM processing
-        // This could involve collecting all processed text from short silence handlers
-        // and sending it to a server for LLM analysis
-        // Example: sendTranscriptionForLLMProcessing(collectedTranscriptions);
     }
-    // , [transcription]);
+
 
     return (
         <div className="p-4 max-w-md mx-auto">
@@ -254,11 +291,25 @@ const AdvancedAudioRecorder: React.FC = () => {
             <div className="mb-4">
                 <label className="block mb-2">Select Audio Input:</label>
                 <select
-                    value={selectedDevice}
-                    onChange={(e) => setSelectedDevice(e.target.value)}
+                    value={selectedInput}
+                    onChange={(e) => setSelectedInput(e.target.value)}
                     className="w-full p-2 border rounded"
                 >
-                    {audioDevices.map((device) => (
+                    {audioInputs.map((device) => (
+                        <option key={device.deviceId} value={device.deviceId}>
+                            {device.label || `Microphone ${device.deviceId.slice(0, 5)}`}
+                        </option>
+                    ))}
+                </select>
+            </div>
+            <div className="mb-4">
+                <label className="block mb-2">Select Audio Output:</label>
+                <select
+                    value={selectedOutput}
+                    onChange={(e) => setSelectedOutput(e.target.value)}
+                    className="w-full p-2 border rounded"
+                >
+                    {audioOutputs.map((device) => (
                         <option key={device.deviceId} value={device.deviceId}>
                             {device.label || `Microphone ${device.deviceId.slice(0, 5)}`}
                         </option>

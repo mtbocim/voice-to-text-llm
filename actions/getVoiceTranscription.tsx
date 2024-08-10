@@ -11,13 +11,16 @@ export default async function getVoiceTranscription(formData: FormData) {
     console.log('starting transcription')
     const start = new Date()
     const audioFile = formData.get('file') as File
+    const previousTranscript = formData.get('previousTranscript') as string
 
     
     /** This is all I need for OpenAI */
+    // Current price is $0.006 per minute of audio rounded to nearest second
     const transcription = await openai.audio.transcriptions.create({
         file: audioFile,
         model: "whisper-1",
         language: "en",
+        prompt: previousTranscript,
     });
     const start2 = new Date();
     
@@ -38,7 +41,7 @@ export default async function getVoiceTranscription(formData: FormData) {
     // const end = new Date();
     // console.log("Sentence:", transcription.text, "\nOpenAI time taken", start2 - start, "ms\n", "Google time taken", end - start2, "ms\n")
 
-
+    console.log(transcription)
     return transcription.text
 
 }
