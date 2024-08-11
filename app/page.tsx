@@ -3,9 +3,16 @@
 //TODO:
 /*
     Test pitch shifted audio for better recognition
+    Result: meh... not great.  Might want to try cleaning the sound?
+
     Handle a pause in speech gracefully, shouldn't cutout the audio
+    - Might be how 'clean' the audio is
+
     Have long silence timer start at same time as short silence timer
+    - I think this is happening, need to confirm
+
     Don't process transcript if getting STT data
+    - Need to test this
     New STT can't happen until transcript response playback starts
 
 */
@@ -48,7 +55,7 @@ const AdvancedAudioRecorder: React.FC = () => {
     const [selectedOutput, setSelectedOutput] = useState<string>('');
     const [transcription, setTranscription] = useState<string>('');
     const [sendTranscript, setSendTranscript] = useState<boolean>(false);
-    const [gettingTransciptData, setGettingTransciptData] = useState<boolean>(false);
+    const [gettingTranscriptData, setGettingTranscriptData] = useState<boolean>(false);
 
     const isRecordingRef = useRef(false);
     const audioContext: AudioContextRef = useRef(null);
@@ -81,13 +88,13 @@ const AdvancedAudioRecorder: React.FC = () => {
     // TODO: Improve this to honor the time better
     // Add state for if waiting for STT data to block getting full response
     useEffect(() => {
-        console.log('Does gettingTransciptData actually block?', gettingTransciptData);
-        if (sendTranscript && !gettingTransciptData && transcription.length > 0) {
+        console.log('Does gettingTransciptData actually block?', gettingTranscriptData);
+        if (sendTranscript && !gettingTranscriptData && transcription.length > 0) {
             console.log('Sending transcript:', transcription);
             handleLongSilence(transcription);
             setSendTranscript(false);
         }
-    }, [sendTranscript, transcription, gettingTransciptData]);
+    }, [sendTranscript, transcription, gettingTranscriptData]);
 
     async function loadAudioDevices(): Promise<void> {
         try {
@@ -250,7 +257,7 @@ const AdvancedAudioRecorder: React.FC = () => {
             // const audio = new Audio('data:audio/webm;base64,' + buffer.toString('base64'));
             // audio.play();
 
-            setGettingTransciptData(true);
+            setGettingTranscriptData(true);
             const formData = new FormData();
             formData.append('file', audioChunk.current, 'audio.webm');
             formData.append('model', 'whisper-1');
@@ -258,7 +265,7 @@ const AdvancedAudioRecorder: React.FC = () => {
             const results = await getVoiceTranscription(formData);
             setTranscription((prev) => prev + ' ' + results);
             transcriptRef.current = results;
-            setGettingTransciptData(false);
+            setGettingTranscriptData(false);
 
         }
         mediaRecorder.current = null;
