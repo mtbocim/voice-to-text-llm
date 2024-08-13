@@ -13,7 +13,9 @@
 
     Don't process transcript if getting STT data
     - Need to test this
-    New STT can't happen until transcript response playback starts
+    
+    Bug: New STT can't happen until transcript response playback starts
+    - Setup a queue for STT data
 
 */
 
@@ -57,7 +59,9 @@ const AdvancedAudioRecorder: React.FC = () => {
     const [sendTranscript, setSendTranscript] = useState<boolean>(false);
     const [gettingTranscriptData, setGettingTranscriptData] = useState<boolean>(false);
     const [availableVoices, setAvailableVoices] = useState<[]>([]);
-
+    const [voice, setVoice] = useState<string>('');
+    
+    const audioQueue = useRef<Blob[]>([]);
     const isRecordingRef = useRef(false);
     const audioContext: AudioContextRef = useRef(null);
     const analyser: AnalyserNodeRef = useRef(null);
@@ -86,14 +90,11 @@ const AdvancedAudioRecorder: React.FC = () => {
             const response = await fetch('https://api.elevenlabs.io/v1/voices');
             const data = await response.json();
             console.log('Available voices:', data);
-            setAvailableVoices(data);
+            setAvailableVoices(data.voices);
+            setVoice(data.voices[0].id);
         }
         fetchAvailableVoices();
     }, []);
-
-    // useEffect(() => {
-    //     transcriptRef.current = transcription;
-    // }, [transcription]);
 
 
     // TODO: Improve this to honor the time better
@@ -106,6 +107,12 @@ const AdvancedAudioRecorder: React.FC = () => {
             setSendTranscript(false);
         }
     }, [sendTranscript, transcription, gettingTranscriptData]);
+
+    useEffect(() => {
+        if (audioQueue.current.length > 0 && !gettingTranscriptData) {
+            processQueue(); // Process the queue whenever there's new data
+        }
+    }, [audioQueue.current.length, gettingTranscriptData]);
 
     async function loadAudioDevices(): Promise<void> {
         try {
@@ -123,7 +130,20 @@ const AdvancedAudioRecorder: React.FC = () => {
         }
     }
 
-
+    async function processQueue(): Promise<void> {
+        while (audioQueue.current.length > 0) {
+            const audioChunk = audioQueue.current.shift();
+            setGettingTranscriptData(true);
+            const formData = new FormData();
+            formData.append('file', audioChunk, 'audio.webm');
+            formData.append('model', 'whisper-1');
+            formData.append('previousTranscript', transcriptRef.current);
+            const results = await getVoiceTranscription(formData);
+            setTranscription((prev) => prev + ' ' + results);
+            transcriptRef.current = results;
+            setGettingTranscriptData(false);
+        }
+    }
 
     async function startListening(): Promise<void> {
         try {
@@ -220,18 +240,6 @@ const AdvancedAudioRecorder: React.FC = () => {
         animationFrame.current = requestAnimationFrame(checkAudio);
     }, [silenceThreshold, shortSilenceDuration, longSilenceDuration, transcription]);
 
-    // This starts recorder correctly, don't change for now!!!
-    // useEffect(() => {
-    //     // console.log("what is state", mediaRecorder.current?.state)
-    //     if (isRecording && mediaRecorder.current?.state === undefined) {
-    //         startRecording();
-    //     }
-    // }, [isRecording]);
-
-
-
-
-
     function startRecording(): void {
         console.log('Starting recording...');
         if (stream.current && !mediaRecorder.current) {
@@ -257,7 +265,7 @@ const AdvancedAudioRecorder: React.FC = () => {
     }
 
 
-    // When called creates a closure, can't see current variable data
+    // When called creates a closure, can't see current state data
     async function handleRecordingStop(): void {
         if (audioChunk.current) {
             console.log('Processing audio chunk');
@@ -268,15 +276,11 @@ const AdvancedAudioRecorder: React.FC = () => {
             // const audio = new Audio('data:audio/webm;base64,' + buffer.toString('base64'));
             // audio.play();
 
-            setGettingTranscriptData(true);
-            const formData = new FormData();
-            formData.append('file', audioChunk.current, 'audio.webm');
-            formData.append('model', 'whisper-1');
-            formData.append('previousTranscript', transcriptRef.current);
-            const results = await getVoiceTranscription(formData);
-            setTranscription((prev) => prev + ' ' + results);
-            transcriptRef.current = results;
-            setGettingTranscriptData(false);
+            //TODO: Add chunks to queue, handle processing elsewhere
+            audioQueue.current.push(audioChunk.current);
+            
+            //Do this somewhere else
+            
 
         }
         mediaRecorder.current = null;
@@ -286,29 +290,30 @@ const AdvancedAudioRecorder: React.FC = () => {
         const start = new Date();
         console.log('Long silence detected. Sending full transcription for processing.');
 
-        // This is the actions version, cannot be used for streaming
-        // const result = await getTranscriptionResponse(transcription);
-        // console.log('Transcription response received:');
-        // playAudio(result)
+        // TODO: Modify to generate and stream text, and call the ElevenLabs API at sentence breaks
 
         const response = await fetch('/api/generateVoice', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ transcription: t })
+            body: JSON.stringify({ transcription: t, voice })
         });
 
         if (!response.ok) {
             throw new Error('Network response was not ok');
         }
 
-        console.log(response.body)
+        const end = new Date();
+        console.log('Time taken:', end - start, 'ms');
 
         const audioContext = new AudioContext();
         const source = audioContext.createBufferSource();
         try {
             const reader = response.body.getReader();
+            if (!reader) {
+                throw new Error('No reader');
+            }
             const stream = new ReadableStream({
                 start(controller) {
                     function push() {
@@ -329,8 +334,7 @@ const AdvancedAudioRecorder: React.FC = () => {
             const audioBuffer = await audioContext.decodeAudioData(await new Response(stream).arrayBuffer());
             source.buffer = audioBuffer;
             source.connect(audioContext.destination);
-            const end = new Date();
-            console.log('Time taken:', end - start, 'ms');
+   
             source.start(0);
 
             setTranscription('')
@@ -339,14 +343,6 @@ const AdvancedAudioRecorder: React.FC = () => {
             console.error('Error processing audio data:', error);
         }
     }
-
-    // function playAudio(audioData: string) {
-    //     const audioSrc = 'data:audio/mp3;base64,' + audioData;
-    //     const audio = new Audio(audioSrc);
-    //     console.log('Audio received and parsed', new Date());
-    //     audio.play();
-    // }
-
 
     return (
         <div className="p-4 max-w-md mx-auto">
@@ -382,8 +378,8 @@ const AdvancedAudioRecorder: React.FC = () => {
             <div className="mb-4">
                 <label className="block mb-2">Select Voice:</label>
                 <select
-                    // value={selectedOutput}
-                    // onChange={(e) => setSelectedOutput(e.target.value)}
+                    value={voice}
+                    onChange={(e) => setVoice(e.target.value)}
                     className="w-full p-2 border rounded"
                 >
                     {availableVoices.map((voice) => (

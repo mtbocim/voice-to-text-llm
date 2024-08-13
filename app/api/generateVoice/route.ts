@@ -16,13 +16,15 @@ const client = new ElevenLabsClient({
 
 export async function POST(req: Request) {
     // Extract the transcription from the request body
-    const { transcription } = await req.json();
+    const { transcription, voice } = await req.json();
+
+    const startText = new Date()
 
     // Gemini response
     const model = genAI.getGenerativeModel({
         model: "gemini-1.5-flash-latest",
         systemInstruction: `
-        You are having a conversation with the user. 
+        You are having a conversation with the user.  The user has provided a transcription of a voice message, which may have grammatical errors or typos due to the nature of speech-to-text transcription.
         Respond in plain text that will be used with a tts model to generate a voice response. 
         To articulate pauses, use elipses (...)
         To emphasize excitement, use multiple exclamation marks (!!!)
@@ -39,19 +41,21 @@ export async function POST(req: Request) {
     })
 
     const result = await chat.sendMessage(transcription);
+    const endText = new Date()
+
     const text = result.response.text()
 
-    console.log("What is the text?", text) 
+    console.log("What is the text?", text, "Time taken", endText - startText, "ms")
 
     // ElevenLabs response
     const audioResponse = await client.generate({
         model_id: "eleven_turbo_v2_5",
         text,
         language_code: "en",
-        voice: "Jessica"
+        voice
     })
 
-   //How to return audio stream???
+    //How to return audio stream???
 
     return new NextResponse(audioResponse, {
         headers: {
