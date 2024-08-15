@@ -1,25 +1,12 @@
 'use client'
 
-//TODO:
 /*
-    Test pitch shifted audio for better recognition
-    Result: meh... not great.  Might want to try cleaning the sound?
-
-    Handle a pause in speech gracefully, shouldn't cutout the audio
-    - Might be how 'clean' the audio is
-
-    Have long silence timer start at same time as short silence timer
-    - I think this is happening, need to confirm
-
-    Don't process transcript if getting STT data
-    - Need to test this
-    
-    Bug: New STT can't happen until transcript response playback starts
-    - Setup a queue for STT data
-
+TODO:
+    Add silence volume detection for dynamic silence threshold setting
 */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { useCompletion, useChat } from 'ai/react';
 import getVoiceTranscription from '@/actions/getVoiceTranscription';
 // import getTranscriptionResponse from '@/actions/getTranscriptionResponse';
 
@@ -43,13 +30,16 @@ interface NumberRef {
     current: number | null;
 }
 
-const AdvancedAudioRecorder: React.FC = () => {
+function AdvancedAudioRecorder() {
+    // Convert to ref?
     const [isListening, setIsListening] = useState<boolean>(false);
     const [isRecording, setIsRecording] = useState<boolean>(false);
-    const [volume, setVolume] = useState<number>(-Infinity);
     const [silenceThreshold, setSilenceThreshold] = useState<number>(-50);
     const [shortSilenceDuration, setShortSilenceDuration] = useState<number>(500);
     const [longSilenceDuration, setLongSilenceDuration] = useState<number>(2000);
+
+    // Updating UI, keep as state
+    const [volume, setVolume] = useState<number>(-Infinity);
     const [isSilent, setIsSilent] = useState<boolean>(true);
     const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
     const [audioOutputs, setAudioOutputs] = useState<MediaDeviceInfo[]>([])
@@ -60,7 +50,8 @@ const AdvancedAudioRecorder: React.FC = () => {
     const [gettingTranscriptData, setGettingTranscriptData] = useState<boolean>(false);
     const [availableVoices, setAvailableVoices] = useState<[]>([]);
     const [voice, setVoice] = useState<string>('');
-    
+    const [voicePlaying, setVoicePlaying] = useState<boolean>(false);
+
     const audioQueue = useRef<Blob[]>([]);
     const isRecordingRef = useRef(false);
     const audioContext: AudioContextRef = useRef(null);
@@ -73,6 +64,44 @@ const AdvancedAudioRecorder: React.FC = () => {
     const stream = useRef<MediaStream | null>(null);
     const longSilenceTimer = useRef<NodeJS.Timeout | null>(null);
     const transcriptRef = useRef<string>('');
+    const previousText = useRef<string>('');
+
+
+    // This is good, it's handling message state for me
+    const { messages, append } = useChat({
+        api: '/api/generateTextResponse',
+    })
+
+    useEffect(() => {
+        console.log("Messages", messages, "Voice Playing", voicePlaying)
+        async function getVoiceTranscription() {
+            const ex = /(.*?[.!?])\s+/gm
+            const currentMessage = messages.slice(-1)[0]
+            
+            console.log('Inside getVoiceTranscription, what is currentMessage?', currentMessage)
+            if (currentMessage.role !== 'user') {
+                // Okay, this is looping correctly!
+                console.log('Messages:', messages.slice(-1)[0].content.match(ex))
+
+                // Here beginneth the experiment
+                const sentences = currentMessage.content.match(ex) as string[]
+                const textToProcess = sentences?.join('').replace(previousText.current, '')
+                console.log('Text to process:', textToProcess, 'previous', previousText.current, 'voice', voice)
+                if (textToProcess && textToProcess !== '') {
+                    getTextToVoice(previousText.current, textToProcess, voice)
+                    previousText.current = sentences?.join('')
+                } else {
+                    setVoicePlaying(false);
+                }
+            }else{
+                setVoicePlaying(false);
+            }
+        }
+        if (!voicePlaying && messages.length > 0) {
+            setVoicePlaying(true);
+            getVoiceTranscription();
+        }
+    }, [messages.slice(-1)[0]?.content]);
 
     useEffect(() => {
         loadAudioDevices();
@@ -85,6 +114,10 @@ const AdvancedAudioRecorder: React.FC = () => {
         isRecordingRef.current = isRecording;
     }, [isRecording]);
 
+
+
+
+    // Get available voices from the ElevenLabs API
     useEffect(() => {
         async function fetchAvailableVoices() {
             const response = await fetch('https://api.elevenlabs.io/v1/voices');
@@ -278,9 +311,9 @@ const AdvancedAudioRecorder: React.FC = () => {
 
             //TODO: Add chunks to queue, handle processing elsewhere
             audioQueue.current.push(audioChunk.current);
-            
+
             //Do this somewhere else
-            
+
 
         }
         mediaRecorder.current = null;
@@ -290,22 +323,81 @@ const AdvancedAudioRecorder: React.FC = () => {
         const start = new Date();
         console.log('Long silence detected. Sending full transcription for processing.');
 
+        // await complete(t);
+        await append({ content: t, role: 'user' })
+        setTranscription('')
+        transcriptRef.current = ''
+
+        // Can I set the last message received as the current state here or do I need to do that elsewhere?
         // TODO: Modify to generate and stream text, and call the ElevenLabs API at sentence breaks
 
-        const response = await fetch('/api/generateVoice', {
+        // const response = await fetch('/api/generateVoice', {
+        //     method: 'POST',
+        //     headers: {
+        //         'Content-Type': 'application/json'
+        //     },
+        //     body: JSON.stringify({ transcription: t, voice })
+        // });
+
+        // if (!response.ok) {
+        //     throw new Error('Network response was not ok');
+        // }
+
+        // const end = new Date();
+        // console.log('Time taken for text response and start voice output:', end - start, 'ms');
+
+
+        // const audioContext = new AudioContext();
+        // const source = audioContext.createBufferSource();
+        // try {
+        //     const reader = response.body.getReader();
+        //     if (!reader) {
+        //         throw new Error('No reader');
+        //     }
+        //     const stream = new ReadableStream({
+        //         start(controller) {
+        //             function push() {
+        //                 reader.read().then(({ done, value }) => {
+        //                     if (done) {
+        //                         controller.close();
+        //                         return;
+        //                     }
+        //                     controller.enqueue(value);
+        //                     push();
+        //                 });
+        //             }
+
+        //             push();
+        //         }
+        //     });
+
+        //     const audioBuffer = await audioContext.decodeAudioData(await new Response(stream).arrayBuffer());
+        //     source.buffer = audioBuffer;
+        //     source.connect(audioContext.destination);
+
+        //     source.start(0);
+
+        //     setTranscription('')
+        //     transcriptRef.current = ''
+        // } catch (error) {
+        //     console.error('Error processing audio data:', error);
+        // }
+    }
+
+    async function getTextToVoice(priorText: string, currentSentence: string, selectedVoice: string): void {
+        console.log("previousText", priorText, "voice", selectedVoice, "currentSentence", currentSentence)
+
+        const response = await fetch('/api/generateVoiceResponse', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ transcription: t, voice })
+            body: JSON.stringify({ previousText: priorText, currentSentence, voice: selectedVoice })
         });
 
         if (!response.ok) {
             throw new Error('Network response was not ok');
         }
-
-        const end = new Date();
-        console.log('Time taken:', end - start, 'ms');
 
         const audioContext = new AudioContext();
         const source = audioContext.createBufferSource();
@@ -326,7 +418,6 @@ const AdvancedAudioRecorder: React.FC = () => {
                             push();
                         });
                     }
-
                     push();
                 }
             });
@@ -334,7 +425,10 @@ const AdvancedAudioRecorder: React.FC = () => {
             const audioBuffer = await audioContext.decodeAudioData(await new Response(stream).arrayBuffer());
             source.buffer = audioBuffer;
             source.connect(audioContext.destination);
-   
+            source.onended = () => {
+                setVoicePlaying(false);
+                previousText.current =  '';
+            }
             source.start(0);
 
             setTranscription('')

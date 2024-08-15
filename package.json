@@ -15,7 +15,7 @@
     "@google/generative-ai": "^0.16.0",
     "@grpc/grpc-js": "^1.11.1",
     "@nextui-org/react": "^2.4.6",
-    "ai": "^3.3.3",
+    "ai": "^3.3.6",
     "dotenv": "^16.4.5",
     "elevenlabs": "^0.14.0",
     "google-auth-library": "^9.13.0",

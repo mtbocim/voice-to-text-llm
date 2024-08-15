@@ -8,8 +8,8 @@ const openai = new OpenAI({ apiKey });
 
 
 export default async function getVoiceTranscription(formData: FormData) {
-    console.log('starting transcription')
-    const start = new Date()
+    // console.log('starting transcription')
+    // const start = new Date()
     const audioFile = formData.get('file') as File
     const previousTranscript = formData.get('previousTranscript') as string
 
@@ -22,7 +22,7 @@ export default async function getVoiceTranscription(formData: FormData) {
         language: "en",
         prompt: previousTranscript,
     });
-    const start2 = new Date();
+    // const start2 = new Date();
     
     
     /** Google transcription here */
@@ -41,7 +41,7 @@ export default async function getVoiceTranscription(formData: FormData) {
     // const end = new Date();
     // console.log("Sentence:", transcription.text, "\nOpenAI time taken", start2 - start, "ms\n", "Google time taken", end - start2, "ms\n")
 
-    console.log(transcription)
+    // console.log(transcription)
     return transcription.text
 
 }

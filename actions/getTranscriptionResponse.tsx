@@ -1,5 +1,33 @@
 'use server'
 
+// Might switch to AssemblyAI for the ability to stream audio to the API
+
+/*
+AssemblyAI API example (non streaming)
+// npm install assemblyai
+
+import { AssemblyAI } from 'assemblyai'
+
+const client = new AssemblyAI({
+  apiKey: "bad1e7dda85d490b99c8df48103668cf"
+})
+
+const audioUrl =
+  'https://storage.googleapis.com/aai-web-samples/5_common_sports_injuries.mp3'
+
+const config = {
+  audio_url: audioUrl
+}
+
+const run = async () => {
+  const transcript = await client.transcripts.transcribe(config)
+  console.log(transcript.text)
+}
+
+run()
+
+*/
+
 import { GoogleGenerativeAI } from '@google/generative-ai';
 const GEMINI_KEY = process.env.GEMINI_KEY || ''
 const genAI = new GoogleGenerativeAI(GEMINI_KEY);
