@@ -6,9 +6,8 @@ TODO:
 */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { useCompletion, useChat } from 'ai/react';
+import { useChat } from 'ai/react';
 import getVoiceTranscription from '@/actions/getVoiceTranscription';
-// import getTranscriptionResponse from '@/actions/getTranscriptionResponse';
 
 interface AudioContextRef {
     current: AudioContext | null;
