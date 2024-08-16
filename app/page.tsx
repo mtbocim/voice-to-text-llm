@@ -5,7 +5,7 @@ TODO:
     Add silence volume detection for dynamic silence threshold setting
 */
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, use } from 'react';
 import { useChat } from 'ai/react';
 import getVoiceTranscription from '@/actions/getVoiceTranscription';
 import { set } from 'zod';
@@ -51,7 +51,7 @@ function AdvancedAudioRecorder() {
     const [availableVoices, setAvailableVoices] = useState<string[]>([]);
     const [selectedVoice, setVoice] = useState<string>('');
     const [playbackActive, setPlaybackActive] = useState<boolean>(false);
-    const [isTextStreaming, setIsTextStreaming] = useState<boolean>(false);
+    const [audioToPlay, setAudioToPlay] = useState<AudioBuffer[]>([]);
 
     const audioQueue = useRef<Blob[]>([]);
     const isRecordingRef = useRef(false);
@@ -65,51 +65,25 @@ function AdvancedAudioRecorder() {
     const stream = useRef<MediaStream | null>(null);
     const longSilenceTimer = useRef<NodeJS.Timeout | null>(null);
     const transcriptRef = useRef<string>('');
-    const previousText = useRef<string>('');
-
-
-    // This is good, it's handling message state for me
-    const { messages, append } = useChat({
-        api: '/api/generateTextResponse',
-        // Need to add something with onFinish so that I get the last bit of the message processed
-        // More state?
-        onFinish: () =>{
-            console.log("Finished current message stream");
-            setIsTextStreaming(false);
-        },
-        onResponse: () => {
-            console.log("Response received")
-            setIsTextStreaming(true);
-        }
-    })
 
     useEffect(() => {
-
-        // If the last message is me, do nothing, voicePlaying = false
-        // 
-        console.log("Messages", messages, "Voice Playing", playbackActive)
-        async function getVoiceTranscription() {
-            const ex = /(.*?[.!?])\s+/gm
-            const currentMessage = messages.slice(-1)[0]
-
-            // console.log('Inside getVoiceTranscription, what is currentMessage?', currentMessage)
-            if (currentMessage.role !== 'user') {
-                console.log('Message:', messages.slice(-1)[0].content.match(ex))
-                const sentences = currentMessage.content.match(ex) as string[] | null
-                const textToProcess = sentences?.join('').replace(previousText.current, '') || ''
-                console.log('Text to process:', textToProcess, '\n\nprevious', previousText.current, '\n\nvoice', selectedVoice)
-
-                // await getTextToVoice(previousText.current, textToProcess, selectedVoice)
-                previousText.current = sentences?.join('') || ''
-
-                // getTextToVoice('', "Hello, this is a test", 'Jessica')
-                setTimeout(()=>{setPlaybackActive(false)},1000)
+        console.log('Audio to play:', audioToPlay.length)
+        if (audioToPlay.length > 0 && playbackActive === false) {
+            const playbackContext = new AudioContext;
+            const source = playbackContext.createBufferSource();
+            const updatedAudioToPlay = [...audioToPlay];
+            const buffer = updatedAudioToPlay.shift();
+            source.buffer = buffer;
+            setPlaybackActive(true);
+            source.connect(playbackContext.destination);
+            source.onended = () => {
+                setPlaybackActive(false);
+                console.log('Playback ended');
             }
+            source.start();
+            setAudioToPlay(updatedAudioToPlay);
         }
-        if (!playbackActive && messages.length > 0) {
-            getVoiceTranscription();
-        }
-    }, [messages.slice(-1)[0]?.content]);
+    }, [audioToPlay, playbackActive]);
 
     useEffect(() => {
         async function loadAudioDevices(): Promise<void> {
@@ -120,7 +94,7 @@ function AdvancedAudioRecorder() {
                 // const audioOutputs = devices.filter(device => device.kind === 'audiooutput')
                 // setAudioOutputs(audioOutputs)
                 if (audioInputs.length > 0) {
-                    setSelectedInput(audioInputs[0].deviceId);
+                    setSelectedInput(audioInputs.filter(i => i.label.includes('Default'))[0].deviceId);
                 }
                 // console.log('Audio devices loaded:', audioInputs);
             } catch (error) {
@@ -137,15 +111,11 @@ function AdvancedAudioRecorder() {
         isRecordingRef.current = isRecording;
     }, [isRecording]);
 
-
-
-
     // Get available voices from the ElevenLabs API
     useEffect(() => {
         async function fetchAvailableVoices() {
             const response = await fetch('https://api.elevenlabs.io/v1/voices');
             const data = await response.json();
-            // console.log('Available voices:', data);
             setAvailableVoices(data.voices.map((i: { voice_id: string, name: string }) => i.name));
             setVoice(data.voices[0].name);
         }
@@ -153,8 +123,6 @@ function AdvancedAudioRecorder() {
     }, []);
 
 
-    // TODO: Improve this to honor the time better
-    // Add state for if waiting for STT data to block getting full response
     useEffect(() => {
         if (sendTranscript && !gettingTranscriptData && transcription.length > 0) {
             handleLongSilence(transcription);
@@ -202,8 +170,7 @@ function AdvancedAudioRecorder() {
             dataArray.current = new Float32Array(analyser.current.fftSize);
 
             setIsListening(true);
-            // checkAudio();
-            getTextToVoice('', 'Hello, this is a test', 'Jessica');
+            checkAudio();
             console.log('Listening started');
         } catch (error) {
             console.error('Error accessing microphone:', error);
@@ -320,24 +287,48 @@ function AdvancedAudioRecorder() {
     /**
      * Adds the current transcription to the chat and resets the transcription state
      */
-    function handleLongSilence(t: string): void {
+    async function handleLongSilence(t: string): void {
+        const start = new Date();
         console.log('Long silence detected. Sending full transcription for processing.');
+        const response = await fetch('/api/generateTextResponse', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ messages: t })
+        });
 
-        // await complete(t);
-        append({ content: t, role: 'user' })
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let processedText = '';
+        let completeText = '';
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const textChunk = decoder.decode(value, { stream: true });
+            completeText += textChunk;
+            const sentences = completeText.match(/(.*?[.!?])\s+/gm);
+            if (sentences) {
+                const message = sentences.join('').replace(processedText, '');
+                const audioBuffer = await getTextToVoice(processedText, message, selectedVoice);
+                console.log('Adding to audioToPlay:', new Date() - start );
+                setAudioToPlay((prev) => [...prev, audioBuffer]);
+                processedText += message;
+            }
+            console.log(textChunk, '\n', completeText, '\n', processedText);
+        }
         setTranscription('')
         transcriptRef.current = ''
     }
 
-    async function getTextToVoice(priorText: string, currentSentence: string, voice: string): Promise<void> {
-        console.log("In getTextToVoice\n", "previousText", priorText, "voice", voice, "currentSentence", currentSentence)
-        setPlaybackActive(true);
+    async function getTextToVoice(priorText: string, currentSentence: string, voice: string): Promise<AudioBuffer | undefined> {
+        console.log("In getTextToVoice", "\npreviousText", priorText, "\nvoice", voice, "\ncurrentSentence", currentSentence)
         if (!currentSentence || currentSentence === '') {
-            setPlaybackActive(false);
-            previousText.current = '';
+            console.log('No text to process');
             return;
         }
-        const start = new Date()
+
         const response = await fetch('/api/generateVoiceResponse', {
             method: 'POST',
             headers: {
@@ -346,56 +337,26 @@ function AdvancedAudioRecorder() {
             body: JSON.stringify({ previousText: priorText, currentSentence, voice: voice })
         });
 
-        console.log('Time to get response:', new Date() - start)
         if (!response.ok) {
             throw new Error('Network response was not ok');
         }
-
+        if (!response.body) {
+            throw new Error('Response body is undefined');
+        }
         // Anything audioContext related should be in a hook
-        const playbackContext = new AudioContext();
         try {
-            const reader = response.body?.getReader();
-            const source = playbackContext.createBufferSource();
-            if (!reader) {
-                throw new Error('No reader');
-            }
-            const stream = new ReadableStream({
-                start(controller) {
-                    async function push() {
-                        try {
-                            const { done, value } = await reader.read();
-                            if (done) {
-                                controller.close();
-                                return;
-                            }
-                            console.log("In buffer stream", value);
-                            const audioBuffer = await playbackContext.decodeAudioData(await new Response(value).arrayBuffer());
-                            const sourceNode = playbackContext.createBufferSource();
-                            sourceNode.buffer = audioBuffer;
-                            sourceNode.connect(playbackContext.destination);
-                            sourceNode.start();
-                            controller.enqueue(value);
-                            push();
-                        } catch (error) {
-                            console.error('Error reading stream:', error);
-                            controller.error(error);
-                        }
-                    }
-                    push();
-                }
-            });
-            // const audioBuffer = await playbackContext.decodeAudioData(await new Response(stream).arrayBuffer());
-            // source.buffer = audioBuffer;
-            // source.connect(playbackContext.destination);
-            // source.onended = () => {
-            //     console.log('Playback ended');
-            //     setPlaybackActive(false);
-            //     previousText.current = '';
-            // }
-            // source.start(0);
+            const playbackContext = new AudioContext;
+            const audioChunks = [];
 
-            setTranscription('')
-            transcriptRef.current = ''
+            const reader = response.body.getReader();
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                audioChunks.push(value);
+            }
+            const arrayBuffer = await new Blob(audioChunks).arrayBuffer();
+            const audioData = await playbackContext.decodeAudioData(arrayBuffer);
+            return audioData
         } catch (error) {
             console.error('Error processing audio data:', error);
         }
