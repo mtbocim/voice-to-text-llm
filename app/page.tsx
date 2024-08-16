@@ -8,6 +8,7 @@ TODO:
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useChat } from 'ai/react';
 import getVoiceTranscription from '@/actions/getVoiceTranscription';
+import { set } from 'zod';
 
 interface AudioContextRef {
     current: AudioContext | null;
@@ -33,7 +34,7 @@ function AdvancedAudioRecorder() {
     // Convert to ref?
     const [isListening, setIsListening] = useState<boolean>(false);
     const [isRecording, setIsRecording] = useState<boolean>(false);
-    const [silenceThreshold, setSilenceThreshold] = useState<number>(-50);
+    const [silenceThreshold, setSilenceThreshold] = useState<number>(-38);
     const [shortSilenceDuration, setShortSilenceDuration] = useState<number>(500);
     const [longSilenceDuration, setLongSilenceDuration] = useState<number>(2000);
 
@@ -41,15 +42,16 @@ function AdvancedAudioRecorder() {
     const [volume, setVolume] = useState<number>(-Infinity);
     const [isSilent, setIsSilent] = useState<boolean>(true);
     const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
-    const [audioOutputs, setAudioOutputs] = useState<MediaDeviceInfo[]>([])
+    // const [audioOutputs, setAudioOutputs] = useState<MediaDeviceInfo[]>([])
     const [selectedInput, setSelectedInput] = useState<string>('');
-    const [selectedOutput, setSelectedOutput] = useState<string>('');
+    // const [selectedOutput, setSelectedOutput] = useState<string>('');
     const [transcription, setTranscription] = useState<string>('');
     const [sendTranscript, setSendTranscript] = useState<boolean>(false);
     const [gettingTranscriptData, setGettingTranscriptData] = useState<boolean>(false);
-    const [availableVoices, setAvailableVoices] = useState<[]>([]);
-    const [voice, setVoice] = useState<string>('');
-    const [voicePlaying, setVoicePlaying] = useState<boolean>(false);
+    const [availableVoices, setAvailableVoices] = useState<string[]>([]);
+    const [selectedVoice, setVoice] = useState<string>('');
+    const [playbackActive, setPlaybackActive] = useState<boolean>(false);
+    const [isTextStreaming, setIsTextStreaming] = useState<boolean>(false);
 
     const audioQueue = useRef<Blob[]>([]);
     const isRecordingRef = useRef(false);
@@ -69,44 +71,66 @@ function AdvancedAudioRecorder() {
     // This is good, it's handling message state for me
     const { messages, append } = useChat({
         api: '/api/generateTextResponse',
+        // Need to add something with onFinish so that I get the last bit of the message processed
+        // More state?
+        onFinish: () =>{
+            console.log("Finished current message stream");
+            setIsTextStreaming(false);
+        },
+        onResponse: () => {
+            console.log("Response received")
+            setIsTextStreaming(true);
+        }
     })
 
     useEffect(() => {
-        console.log("Messages", messages, "Voice Playing", voicePlaying)
+
+        // If the last message is me, do nothing, voicePlaying = false
+        // 
+        console.log("Messages", messages, "Voice Playing", playbackActive)
         async function getVoiceTranscription() {
             const ex = /(.*?[.!?])\s+/gm
             const currentMessage = messages.slice(-1)[0]
-            
-            console.log('Inside getVoiceTranscription, what is currentMessage?', currentMessage)
-            if (currentMessage.role !== 'user') {
-                // Okay, this is looping correctly!
-                console.log('Messages:', messages.slice(-1)[0].content.match(ex))
 
-                // Here beginneth the experiment
-                const sentences = currentMessage.content.match(ex) as string[]
-                const textToProcess = sentences?.join('').replace(previousText.current, '')
-                console.log('Text to process:', textToProcess, 'previous', previousText.current, 'voice', voice)
-                if (textToProcess && textToProcess !== '') {
-                    getTextToVoice(previousText.current, textToProcess, voice)
-                    previousText.current = sentences?.join('')
-                } else {
-                    setVoicePlaying(false);
-                }
-            }else{
-                setVoicePlaying(false);
+            // console.log('Inside getVoiceTranscription, what is currentMessage?', currentMessage)
+            if (currentMessage.role !== 'user') {
+                console.log('Message:', messages.slice(-1)[0].content.match(ex))
+                const sentences = currentMessage.content.match(ex) as string[] | null
+                const textToProcess = sentences?.join('').replace(previousText.current, '') || ''
+                console.log('Text to process:', textToProcess, '\n\nprevious', previousText.current, '\n\nvoice', selectedVoice)
+
+                // await getTextToVoice(previousText.current, textToProcess, selectedVoice)
+                previousText.current = sentences?.join('') || ''
+
+                // getTextToVoice('', "Hello, this is a test", 'Jessica')
+                setTimeout(()=>{setPlaybackActive(false)},1000)
             }
         }
-        if (!voicePlaying && messages.length > 0) {
-            setVoicePlaying(true);
+        if (!playbackActive && messages.length > 0) {
             getVoiceTranscription();
         }
     }, [messages.slice(-1)[0]?.content]);
 
     useEffect(() => {
+        async function loadAudioDevices(): Promise<void> {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const audioInputs = devices.filter(device => device.kind === 'audioinput');
+                setAudioInputs(audioInputs);
+                // const audioOutputs = devices.filter(device => device.kind === 'audiooutput')
+                // setAudioOutputs(audioOutputs)
+                if (audioInputs.length > 0) {
+                    setSelectedInput(audioInputs[0].deviceId);
+                }
+                // console.log('Audio devices loaded:', audioInputs);
+            } catch (error) {
+                console.error('Error loading audio devices:', error);
+            }
+        }
         loadAudioDevices();
-        return () => {
-            stopListening();
-        };
+        // return () => {
+        //     stopListening();
+        // };
     }, []);
 
     useEffect(() => {
@@ -121,9 +145,9 @@ function AdvancedAudioRecorder() {
         async function fetchAvailableVoices() {
             const response = await fetch('https://api.elevenlabs.io/v1/voices');
             const data = await response.json();
-            console.log('Available voices:', data);
-            setAvailableVoices(data.voices);
-            setVoice(data.voices[0].id);
+            // console.log('Available voices:', data);
+            setAvailableVoices(data.voices.map((i: { voice_id: string, name: string }) => i.name));
+            setVoice(data.voices[0].name);
         }
         fetchAvailableVoices();
     }, []);
@@ -132,39 +156,25 @@ function AdvancedAudioRecorder() {
     // TODO: Improve this to honor the time better
     // Add state for if waiting for STT data to block getting full response
     useEffect(() => {
-        console.log('Does gettingTransciptData actually block?', gettingTranscriptData);
         if (sendTranscript && !gettingTranscriptData && transcription.length > 0) {
-            console.log('Sending transcript:', transcription);
             handleLongSilence(transcription);
             setSendTranscript(false);
         }
     }, [sendTranscript, transcription, gettingTranscriptData]);
 
+
+    // Handles getting the user audio transcribed
     useEffect(() => {
         if (audioQueue.current.length > 0 && !gettingTranscriptData) {
             processQueue(); // Process the queue whenever there's new data
         }
     }, [audioQueue.current.length, gettingTranscriptData]);
 
-    async function loadAudioDevices(): Promise<void> {
-        try {
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            const audioInputs = devices.filter(device => device.kind === 'audioinput');
-            const audioOutputs = devices.filter(device => device.kind === 'audiooutput')
-            setAudioInputs(audioInputs);
-            setAudioOutputs(audioOutputs)
-            if (audioInputs.length > 0) {
-                setSelectedInput(audioInputs[0].deviceId);
-            }
-            console.log('Audio devices loaded:', audioInputs);
-        } catch (error) {
-            console.error('Error loading audio devices:', error);
-        }
-    }
+
 
     async function processQueue(): Promise<void> {
         while (audioQueue.current.length > 0) {
-            const audioChunk = audioQueue.current.shift();
+            const audioChunk = audioQueue.current.shift() as Blob;
             setGettingTranscriptData(true);
             const formData = new FormData();
             formData.append('file', audioChunk, 'audio.webm');
@@ -183,7 +193,7 @@ function AdvancedAudioRecorder() {
             stream.current = await navigator.mediaDevices.getUserMedia({
                 audio: { deviceId: selectedInput ? { exact: selectedInput } : undefined }
             });
-            audioContext.current = new (window.AudioContext || window.webkitAudioContext)();
+            audioContext.current = new AudioContext();
             analyser.current = audioContext.current.createAnalyser();
             const source: MediaStreamAudioSourceNode = audioContext.current.createMediaStreamSource(stream.current);
             source.connect(analyser.current);
@@ -192,7 +202,8 @@ function AdvancedAudioRecorder() {
             dataArray.current = new Float32Array(analyser.current.fftSize);
 
             setIsListening(true);
-            checkAudio();
+            // checkAudio();
+            getTextToVoice('', 'Hello, this is a test', 'Jessica');
             console.log('Listening started');
         } catch (error) {
             console.error('Error accessing microphone:', error);
@@ -298,137 +309,90 @@ function AdvancedAudioRecorder() {
 
 
     // When called creates a closure, can't see current state data
-    async function handleRecordingStop(): void {
+    async function handleRecordingStop(): Promise<void> {
         if (audioChunk.current) {
             console.log('Processing audio chunk');
-
-            // Keep this for checking audio data quality
-            // const audioBuffer = await audioChunk.current.arrayBuffer();
-            // const buffer = Buffer.from(audioBuffer);
-            // const audio = new Audio('data:audio/webm;base64,' + buffer.toString('base64'));
-            // audio.play();
-
-            //TODO: Add chunks to queue, handle processing elsewhere
             audioQueue.current.push(audioChunk.current);
-
-            //Do this somewhere else
-
-
         }
         mediaRecorder.current = null;
     }
 
-    async function handleLongSilence(t): void {
-        const start = new Date();
+    /**
+     * Adds the current transcription to the chat and resets the transcription state
+     */
+    function handleLongSilence(t: string): void {
         console.log('Long silence detected. Sending full transcription for processing.');
 
         // await complete(t);
-        await append({ content: t, role: 'user' })
+        append({ content: t, role: 'user' })
         setTranscription('')
         transcriptRef.current = ''
-
-        // Can I set the last message received as the current state here or do I need to do that elsewhere?
-        // TODO: Modify to generate and stream text, and call the ElevenLabs API at sentence breaks
-
-        // const response = await fetch('/api/generateVoice', {
-        //     method: 'POST',
-        //     headers: {
-        //         'Content-Type': 'application/json'
-        //     },
-        //     body: JSON.stringify({ transcription: t, voice })
-        // });
-
-        // if (!response.ok) {
-        //     throw new Error('Network response was not ok');
-        // }
-
-        // const end = new Date();
-        // console.log('Time taken for text response and start voice output:', end - start, 'ms');
-
-
-        // const audioContext = new AudioContext();
-        // const source = audioContext.createBufferSource();
-        // try {
-        //     const reader = response.body.getReader();
-        //     if (!reader) {
-        //         throw new Error('No reader');
-        //     }
-        //     const stream = new ReadableStream({
-        //         start(controller) {
-        //             function push() {
-        //                 reader.read().then(({ done, value }) => {
-        //                     if (done) {
-        //                         controller.close();
-        //                         return;
-        //                     }
-        //                     controller.enqueue(value);
-        //                     push();
-        //                 });
-        //             }
-
-        //             push();
-        //         }
-        //     });
-
-        //     const audioBuffer = await audioContext.decodeAudioData(await new Response(stream).arrayBuffer());
-        //     source.buffer = audioBuffer;
-        //     source.connect(audioContext.destination);
-
-        //     source.start(0);
-
-        //     setTranscription('')
-        //     transcriptRef.current = ''
-        // } catch (error) {
-        //     console.error('Error processing audio data:', error);
-        // }
     }
 
-    async function getTextToVoice(priorText: string, currentSentence: string, selectedVoice: string): void {
-        console.log("previousText", priorText, "voice", selectedVoice, "currentSentence", currentSentence)
-
+    async function getTextToVoice(priorText: string, currentSentence: string, voice: string): Promise<void> {
+        console.log("In getTextToVoice\n", "previousText", priorText, "voice", voice, "currentSentence", currentSentence)
+        setPlaybackActive(true);
+        if (!currentSentence || currentSentence === '') {
+            setPlaybackActive(false);
+            previousText.current = '';
+            return;
+        }
+        const start = new Date()
         const response = await fetch('/api/generateVoiceResponse', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ previousText: priorText, currentSentence, voice: selectedVoice })
+            body: JSON.stringify({ previousText: priorText, currentSentence, voice: voice })
         });
 
+        console.log('Time to get response:', new Date() - start)
         if (!response.ok) {
             throw new Error('Network response was not ok');
         }
 
-        const audioContext = new AudioContext();
-        const source = audioContext.createBufferSource();
+        // Anything audioContext related should be in a hook
+        const playbackContext = new AudioContext();
         try {
-            const reader = response.body.getReader();
+            const reader = response.body?.getReader();
+            const source = playbackContext.createBufferSource();
             if (!reader) {
                 throw new Error('No reader');
             }
             const stream = new ReadableStream({
                 start(controller) {
-                    function push() {
-                        reader.read().then(({ done, value }) => {
+                    async function push() {
+                        try {
+                            const { done, value } = await reader.read();
                             if (done) {
                                 controller.close();
                                 return;
                             }
+                            console.log("In buffer stream", value);
+                            const audioBuffer = await playbackContext.decodeAudioData(await new Response(value).arrayBuffer());
+                            const sourceNode = playbackContext.createBufferSource();
+                            sourceNode.buffer = audioBuffer;
+                            sourceNode.connect(playbackContext.destination);
+                            sourceNode.start();
                             controller.enqueue(value);
                             push();
-                        });
+                        } catch (error) {
+                            console.error('Error reading stream:', error);
+                            controller.error(error);
+                        }
                     }
                     push();
                 }
             });
-
-            const audioBuffer = await audioContext.decodeAudioData(await new Response(stream).arrayBuffer());
-            source.buffer = audioBuffer;
-            source.connect(audioContext.destination);
-            source.onended = () => {
-                setVoicePlaying(false);
-                previousText.current =  '';
-            }
-            source.start(0);
+            // const audioBuffer = await playbackContext.decodeAudioData(await new Response(stream).arrayBuffer());
+            // source.buffer = audioBuffer;
+            // source.connect(playbackContext.destination);
+            // source.onended = () => {
+            //     console.log('Playback ended');
+            //     setPlaybackActive(false);
+            //     previousText.current = '';
+            // }
+            // source.start(0);
 
             setTranscription('')
             transcriptRef.current = ''
@@ -454,7 +418,7 @@ function AdvancedAudioRecorder() {
                     ))}
                 </select>
             </div>
-            <div className="mb-4">
+            {/* <div className="mb-4">
                 <label className="block mb-2">Select Audio Output:</label>
                 <select
                     value={selectedOutput}
@@ -467,17 +431,17 @@ function AdvancedAudioRecorder() {
                         </option>
                     ))}
                 </select>
-            </div>
+            </div> */}
             <div className="mb-4">
                 <label className="block mb-2">Select Voice:</label>
                 <select
-                    value={voice}
+                    value={selectedVoice}
                     onChange={(e) => setVoice(e.target.value)}
                     className="w-full p-2 border rounded"
                 >
                     {availableVoices.map((voice) => (
-                        <option key={voice.id} value={voice.id}>
-                            {voice.name}
+                        <option key={voice} value={voice}>
+                            {voice}
                         </option>
                     ))}
                 </select>

@@ -7,7 +7,7 @@ const client = new ElevenLabsClient({
 });
 
 export async function POST(req: Request) {
-    // Extract the transcription from the request body
+
     const { previousText, voice, currentSentence } = await req.json();
 
     // ElevenLabs response
@@ -16,9 +16,9 @@ export async function POST(req: Request) {
         text: currentSentence,
         previous_text: previousText,
         language_code: "en",
-        voice
+        voice,
+        stream: true,
     })
-
 
     return new NextResponse(audioResponse, {
         headers: {
