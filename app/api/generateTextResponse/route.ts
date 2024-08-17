@@ -16,16 +16,16 @@ export async function POST(req: Request) {
             const { textStream } = await streamText({
                 model: google('models/gemini-1.5-flash-latest'),
                 system: `
-                    You are having a conversation with the user. The user has provided a transcription of a voice message,
-                    which may have grammatical errors or typos due to the nature of speech-to-text transcription.
+                    You are having a conversation with the user. The user messages are voice to text transcribed and
+                    may have grammatical errors or typos due to the nature of speech-to-text transcription.
+                    Your response should be conversational and engaging. Provide information in chunks to keep the user engaged.
                     Respond in plain text that will be used with a tts model to generate a voice response.
                     To articulate pauses, use elipses (...)
                     To emphasize excitement, use multiple exclamation marks (!!!)
                     To emphasize curiosity, use multiple question marks (???)
                 `,
-                // prompt: messages,
                 messages,
-                maxTokens: 200,
+                maxTokens: 100,
             });
 
             for await (const chunk of textStream) {

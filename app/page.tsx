@@ -3,12 +3,11 @@
 /*
 TODO:
     Add silence volume detection for dynamic silence threshold setting
+    Additionally, add a cutoff so that random quiet noise aren't recorded
 */
 
-import React, { useState, useRef, useEffect, useCallback, use } from 'react';
-import { useChat } from 'ai/react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import getVoiceTranscription from '@/actions/getVoiceTranscription';
-import { set } from 'zod';
 
 interface AudioContextRef {
     current: AudioContext | null;
@@ -52,6 +51,7 @@ function AdvancedAudioRecorder() {
     const [selectedVoice, setVoice] = useState<string>('');
     const [playbackActive, setPlaybackActive] = useState<boolean>(false);
     const [audioToPlay, setAudioToPlay] = useState<AudioBuffer[]>([]);
+    const [chatContext, setChatContext] = useState < { role: string; content: string; }[]>([]);
 
     const audioQueue = useRef<Blob[]>([]);
     const isRecordingRef = useRef(false);
@@ -67,20 +67,22 @@ function AdvancedAudioRecorder() {
     const transcriptRef = useRef<string>('');
 
     useEffect(() => {
-        console.log('Audio to play:', audioToPlay.length)
+        console.log('Audio to play:', audioToPlay.length, 'Playback active:', playbackActive);
         if (audioToPlay.length > 0 && playbackActive === false) {
             const playbackContext = new AudioContext;
             const source = playbackContext.createBufferSource();
             const updatedAudioToPlay = [...audioToPlay];
             const buffer = updatedAudioToPlay.shift();
-            source.buffer = buffer;
-            setPlaybackActive(true);
-            source.connect(playbackContext.destination);
-            source.onended = () => {
-                setPlaybackActive(false);
-                console.log('Playback ended');
+            if (buffer) {
+                source.buffer = buffer;
+                setPlaybackActive(true);
+                source.connect(playbackContext.destination);
+                source.onended = () => {
+                    setPlaybackActive(false);
+                    console.log('Playback ended');
+                }
+                source.start();
             }
-            source.start();
             setAudioToPlay(updatedAudioToPlay);
         }
     }, [audioToPlay, playbackActive]);
@@ -217,15 +219,12 @@ function AdvancedAudioRecorder() {
         if (dbFS < silenceThreshold) {
             // Set silence start time if not already set
             if (!silenceStartTime.current) {
-                console.log('Setting silence start time');
                 silenceStartTime.current = Date.now();
-                console.log('Starting long silence timer');
                 longSilenceTimer.current = setTimeout(() => setSendTranscript(true), longSilenceDuration);
             } else {
                 const silenceDuration = Date.now() - silenceStartTime.current;
 
                 if (silenceDuration > shortSilenceDuration && isRecordingRef.current) {
-                    console.log('Stopping recording due to short silence');
                     stopRecording();
                     setIsRecording(false);
                 }
@@ -251,7 +250,6 @@ function AdvancedAudioRecorder() {
     }, [silenceThreshold, shortSilenceDuration, longSilenceDuration, transcription]);
 
     function startRecording(): void {
-        console.log('Starting recording...');
         if (stream.current && !mediaRecorder.current) {
             mediaRecorder.current = new MediaRecorder(stream.current, { mimeType: 'audio/webm' });
             mediaRecorder.current.ondataavailable = handleDataAvailable;
@@ -261,7 +259,6 @@ function AdvancedAudioRecorder() {
     }
 
     function stopRecording(): void {
-        console.log('Stopping recording...');
         if (mediaRecorder.current && mediaRecorder.current.state !== 'inactive') {
             mediaRecorder.current.stop();
         }
@@ -270,7 +267,6 @@ function AdvancedAudioRecorder() {
     function handleDataAvailable(event: BlobEvent): void {
         if (event.data.size > 0) {
             audioChunk.current = event.data;
-            console.log('Audio chunk received:', event.data.size, 'bytes');
         }
     }
 
@@ -278,7 +274,6 @@ function AdvancedAudioRecorder() {
     // When called creates a closure, can't see current state data
     async function handleRecordingStop(): Promise<void> {
         if (audioChunk.current) {
-            console.log('Processing audio chunk');
             audioQueue.current.push(audioChunk.current);
         }
         mediaRecorder.current = null;
@@ -290,18 +285,23 @@ function AdvancedAudioRecorder() {
     async function handleLongSilence(t: string): void {
         const start = new Date();
         console.log('Long silence detected. Sending full transcription for processing.');
+
+        const currentMessage = { role: 'user', content: t };
         const response = await fetch('/api/generateTextResponse', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ messages: t })
+            body: JSON.stringify({ messages: [...chatContext, currentMessage] })
         });
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let processedText = '';
         let completeText = '';
+
+        //Make sure to reset the audio queue in case the onended doesn't trigger
+        setPlaybackActive(false)
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
@@ -312,74 +312,78 @@ function AdvancedAudioRecorder() {
             if (sentences) {
                 const message = sentences.join('').replace(processedText, '');
                 const audioBuffer = await getTextToVoice(processedText, message, selectedVoice);
-                console.log('Adding to audioToPlay:', new Date() - start );
-                setAudioToPlay((prev) => [...prev, audioBuffer]);
-                processedText += message;
+                console.log('Adding to audioToPlay:', new Date() - start);
+
+                if (audioBuffer) {
+                    setAudioToPlay((prev) => [...prev, audioBuffer]);
+                    processedText += message;
+                }
             }
             console.log(textChunk, '\n', completeText, '\n', processedText);
         }
-        setTranscription('')
-        transcriptRef.current = ''
+    
+    setChatContext([...chatContext, currentMessage, { role: 'assistant', content: completeText }]);
+    setTranscription('')
+    transcriptRef.current = ''
+}
+
+async function getTextToVoice(priorText: string, currentSentence: string, voice: string): Promise<AudioBuffer | undefined> {
+    if (!currentSentence || currentSentence === '') {
+        console.log('No text to process');
+        return undefined;
     }
 
-    async function getTextToVoice(priorText: string, currentSentence: string, voice: string): Promise<AudioBuffer | undefined> {
-        console.log("In getTextToVoice", "\npreviousText", priorText, "\nvoice", voice, "\ncurrentSentence", currentSentence)
-        if (!currentSentence || currentSentence === '') {
-            console.log('No text to process');
-            return;
-        }
-
-        const response = await fetch('/api/generateVoiceResponse', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ previousText: priorText, currentSentence, voice: voice })
-        });
-
-        if (!response.ok) {
-            throw new Error('Network response was not ok');
-        }
-        if (!response.body) {
-            throw new Error('Response body is undefined');
-        }
-        // Anything audioContext related should be in a hook
-        try {
-            const playbackContext = new AudioContext;
-            const audioChunks = [];
-
-            const reader = response.body.getReader();
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                audioChunks.push(value);
-            }
-            const arrayBuffer = await new Blob(audioChunks).arrayBuffer();
-            const audioData = await playbackContext.decodeAudioData(arrayBuffer);
-            return audioData
-        } catch (error) {
-            console.error('Error processing audio data:', error);
-        }
+    const response = await fetch('/api/generateVoiceResponse', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ previousText: priorText, currentSentence, voice: voice })
+    });
+    console.log('Response:', response, response.body);
+    if (!response.ok) {
+        throw new Error('Network response was not ok');
     }
+    if (!response.body) {
+        throw new Error('Response body is undefined');
+    }
+    // Anything audioContext related should be in a hook
+    try {
+        const playbackContext = new AudioContext;
+        const audioChunks = [];
 
-    return (
-        <div className="p-4 max-w-md mx-auto">
-            <h1 className="text-2xl font-bold mb-4">Advanced Audio Recorder</h1>
-            <div className="mb-4">
-                <label className="block mb-2">Select Audio Input:</label>
-                <select
-                    value={selectedInput}
-                    onChange={(e) => setSelectedInput(e.target.value)}
-                    className="w-full p-2 border rounded"
-                >
-                    {audioInputs.map((device) => (
-                        <option key={device.deviceId} value={device.deviceId}>
-                            {device.label || `Microphone ${device.deviceId.slice(0, 5)}`}
-                        </option>
-                    ))}
-                </select>
-            </div>
-            {/* <div className="mb-4">
+        const reader = response.body.getReader();
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            audioChunks.push(value);
+        }
+        const arrayBuffer = await new Blob(audioChunks).arrayBuffer();
+        const audioData = await playbackContext.decodeAudioData(arrayBuffer);
+        return audioData
+    } catch (error) {
+        console.error('Error processing audio data:', error);
+    }
+}
+
+return (
+    <div className="p-4 max-w-md mx-auto">
+        <h1 className="text-2xl font-bold mb-4">Advanced Audio Recorder</h1>
+        <div className="mb-4">
+            <label className="block mb-2">Select Audio Input:</label>
+            <select
+                value={selectedInput}
+                onChange={(e) => setSelectedInput(e.target.value)}
+                className="w-full p-2 border rounded"
+            >
+                {audioInputs.map((device) => (
+                    <option key={device.deviceId} value={device.deviceId}>
+                        {device.label || `Microphone ${device.deviceId.slice(0, 5)}`}
+                    </option>
+                ))}
+            </select>
+        </div>
+        {/* <div className="mb-4">
                 <label className="block mb-2">Select Audio Output:</label>
                 <select
                     value={selectedOutput}
@@ -393,87 +397,87 @@ function AdvancedAudioRecorder() {
                     ))}
                 </select>
             </div> */}
-            <div className="mb-4">
-                <label className="block mb-2">Select Voice:</label>
-                <select
-                    value={selectedVoice}
-                    onChange={(e) => setVoice(e.target.value)}
-                    className="w-full p-2 border rounded"
-                >
-                    {availableVoices.map((voice) => (
-                        <option key={voice} value={voice}>
-                            {voice}
-                        </option>
-                    ))}
-                </select>
-            </div>
-            <button
-                className={`px-4 py-2 rounded ${isListening ? 'bg-red-500' : 'bg-green-500'} text-white mb-4`}
-                onClick={isListening ? stopListening : startListening}
+        <div className="mb-4">
+            <label className="block mb-2">Select Voice:</label>
+            <select
+                value={selectedVoice}
+                onChange={(e) => setVoice(e.target.value)}
+                className="w-full p-2 border rounded"
             >
-                {isListening ? 'Stop Listening' : 'Start Listening'}
-            </button>
-            <div className="mb-4">
-                <label className="block mb-2">
-                    Current Volume: {volume === -Infinity ? '-∞' : volume.toFixed(2)} dB
-                </label>
-                <div className="w-full bg-gray-200 rounded-full h-2.5">
-                    <div
-                        className="bg-blue-600 h-2.5 rounded-full"
-                        style={{ width: `${Math.max(0, (volume + 100) / 100 * 100)}%` }}
-                    ></div>
-                </div>
-            </div>
-            <div className="mb-4">
-                <label className="block mb-2">
-                    Silence Threshold: {silenceThreshold} dB
-                </label>
-                <input
-                    type="range"
-                    min="-100"
-                    max="0"
-                    value={silenceThreshold}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSilenceThreshold(Number(e.target.value))}
-                    className="w-full"
-                />
-            </div>
-            <div className="mb-4">
-                <label className="block mb-2">
-                    Short Silence Duration: {shortSilenceDuration} ms
-                </label>
-                <input
-                    type="range"
-                    min="100"
-                    max="2000"
-                    step="100"
-                    value={shortSilenceDuration}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setShortSilenceDuration(Number(e.target.value))}
-                    className="w-full"
-                />
-            </div>
-            <div className="mb-4">
-                <label className="block mb-2">
-                    Long Silence Duration: {longSilenceDuration} ms
-                </label>
-                <input
-                    type="range"
-                    min="1000"
-                    max="5000"
-                    step="100"
-                    value={longSilenceDuration}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setLongSilenceDuration(Number(e.target.value))}
-                    className="w-full"
-                />
-            </div>
-            <div className={`p-4 rounded ${isSilent ? 'bg-red-200' : 'bg-green-200'}`}>
-                {isSilent ? 'Silence Detected' : 'Audio Detected'}
-            </div>
-            <div className={`p-4 rounded mt-4 ${isRecording ? 'bg-yellow-200' : 'bg-gray-200'}`}>
-                Recording Status: {isRecording ? 'Recording' : 'Not Recording'}
-            </div>
-            <div>{transcription}</div>
+                {availableVoices.map((voice) => (
+                    <option key={voice} value={voice}>
+                        {voice}
+                    </option>
+                ))}
+            </select>
         </div>
-    );
+        <button
+            className={`px-4 py-2 rounded ${isListening ? 'bg-red-500' : 'bg-green-500'} text-white mb-4`}
+            onClick={isListening ? stopListening : startListening}
+        >
+            {isListening ? 'Stop Listening' : 'Start Listening'}
+        </button>
+        <div className="mb-4">
+            <label className="block mb-2">
+                Current Volume: {volume === -Infinity ? '-∞' : volume.toFixed(2)} dB
+            </label>
+            <div className="w-full bg-gray-200 rounded-full h-2.5">
+                <div
+                    className="bg-blue-600 h-2.5 rounded-full"
+                    style={{ width: `${Math.max(0, (volume + 100) / 100 * 100)}%` }}
+                ></div>
+            </div>
+        </div>
+        <div className="mb-4">
+            <label className="block mb-2">
+                Silence Threshold: {silenceThreshold} dB
+            </label>
+            <input
+                type="range"
+                min="-100"
+                max="0"
+                value={silenceThreshold}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSilenceThreshold(Number(e.target.value))}
+                className="w-full"
+            />
+        </div>
+        <div className="mb-4">
+            <label className="block mb-2">
+                Short Silence Duration: {shortSilenceDuration} ms
+            </label>
+            <input
+                type="range"
+                min="100"
+                max="2000"
+                step="100"
+                value={shortSilenceDuration}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setShortSilenceDuration(Number(e.target.value))}
+                className="w-full"
+            />
+        </div>
+        <div className="mb-4">
+            <label className="block mb-2">
+                Long Silence Duration: {longSilenceDuration} ms
+            </label>
+            <input
+                type="range"
+                min="1000"
+                max="5000"
+                step="100"
+                value={longSilenceDuration}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setLongSilenceDuration(Number(e.target.value))}
+                className="w-full"
+            />
+        </div>
+        <div className={`p-4 rounded ${isSilent ? 'bg-red-200' : 'bg-green-200'}`}>
+            {isSilent ? 'Silence Detected' : 'Audio Detected'}
+        </div>
+        <div className={`p-4 rounded mt-4 ${isRecording ? 'bg-yellow-200' : 'bg-gray-200'}`}>
+            Recording Status: {isRecording ? 'Recording' : 'Not Recording'}
+        </div>
+        <div>{transcription}</div>
+    </div>
+);
 };
 
 export default AdvancedAudioRecorder;
