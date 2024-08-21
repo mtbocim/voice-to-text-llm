@@ -7,13 +7,11 @@ const client = new ElevenLabsClient({
 });
 
 import OpenAI from 'openai';
-import { Stream } from 'openai/streaming.mjs';
-import { Readable } from 'stream';
 const OPENAI_KEY = process.env.OPENAI_KEY;
 const openai = new OpenAI({ apiKey: OPENAI_KEY });
 
 // Setup OpenAI as cheap alternative
-const TTS_SOURCE = 'openai'; // 'openai' or 'elevenlabs'
+const TTS_SOURCE = false ? 'elevenlabs' : 'openai'; // 'openai' or 'elevenlabs'
 
 export async function POST(req: Request): Promise<NextResponse<ReadableStream>> {
 
@@ -22,6 +20,8 @@ export async function POST(req: Request): Promise<NextResponse<ReadableStream>> 
     // ElevenLabs response
 
     if (TTS_SOURCE !== 'openai') {
+        
+        // ElevenLabs response
         const audioResponse = await client.generate({
             model_id: "eleven_turbo_v2_5",
             text: currentSentence,
@@ -42,20 +42,21 @@ export async function POST(req: Request): Promise<NextResponse<ReadableStream>> 
 
         return new NextResponse(stream, {
             headers: {
-                'Content-Type': 'audio/mpeg', // Adjust content type based on the audio format
+                'Content-Type': 'audio/mpeg', 
                 'Transfer-Encoding': 'chunked',
                 'Cache-Control': 'no-cache',
             }
         });
     } else {
+        console.log('Using OpenAI, cost:', 15/1_000_000 * currentSentence.length, 'USD'); // 15 USD per 1M characters
         const audioResponse = await openai.audio.speech.create({
             model: "tts-1",
-            voice: "alloy",
+            voice,
             input: currentSentence,
         });
         return new NextResponse(audioResponse.body, {
             headers: {
-                'Content-Type': 'audio/mpeg', // Adjust content type based on the audio format
+                'Content-Type': 'audio/mpeg',
                 'Transfer-Encoding': 'chunked',
                 'Cache-Control': 'no-cache',
             }

@@ -7,6 +7,7 @@ TODO:
 */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Accordion, AccordionItem } from '@nextui-org/react';
 import getVoiceTranscription from '@/actions/getVoiceTranscription';
 
 interface AudioContextRef {
@@ -29,9 +30,17 @@ interface NumberRef {
     current: number | null;
 }
 
+const COLOR_MAP = {
+    user: 'bg-blue-200',
+    assistant: 'bg-green-200',
+    feedback: 'bg-yellow-200',
+};
+
+const OPENAI_VOICES = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer']
+
 function AdvancedAudioRecorder() {
     // Convert to ref?
-    const [isListening, setIsListening] = useState<boolean>(false);
+    const [isListeningIndicator, setIsListening] = useState<boolean>(false);
     const [isRecording, setIsRecording] = useState<boolean>(false);
     const [silenceThreshold, setSilenceThreshold] = useState<number>(-38);
     const [shortSilenceDuration, setShortSilenceDuration] = useState<number>(500);
@@ -47,11 +56,11 @@ function AdvancedAudioRecorder() {
     const [transcription, setTranscription] = useState<string>('');
     const [sendTranscript, setSendTranscript] = useState<boolean>(false);
     const [gettingTranscriptData, setGettingTranscriptData] = useState<boolean>(false);
-    const [availableVoices, setAvailableVoices] = useState<string[]>([]);
-    const [selectedVoice, setVoice] = useState<string>('');
+    const [availableTTSVoices, setAvailableVoices] = useState<string[]>([]);
+    const [selectedTTSVoice, setVoice] = useState<string>('');
     const [playbackActive, setPlaybackActive] = useState<boolean>(false);
     const [audioToPlay, setAudioToPlay] = useState<AudioBuffer[]>([]);
-    const [chatContext, setChatContext] = useState < { role: string; content: string; }[]>([]);
+    const [chatContext, setChatContext] = useState<{ role: string; content: string; }[]>([]);
 
     const audioQueue = useRef<Blob[]>([]);
     const isRecordingRef = useRef(false);
@@ -115,13 +124,19 @@ function AdvancedAudioRecorder() {
 
     // Get available voices from the ElevenLabs API
     useEffect(() => {
+
         async function fetchAvailableVoices() {
             const response = await fetch('https://api.elevenlabs.io/v1/voices');
             const data = await response.json();
             setAvailableVoices(data.voices.map((i: { voice_id: string, name: string }) => i.name));
             setVoice(data.voices[0].name);
         }
-        fetchAvailableVoices();
+        if (true) {
+            setAvailableVoices(OPENAI_VOICES);
+            setVoice(OPENAI_VOICES[0]);
+        } else {
+            fetchAvailableVoices();
+        }
     }, []);
 
 
@@ -294,6 +309,13 @@ function AdvancedAudioRecorder() {
             },
             body: JSON.stringify({ messages: [...chatContext, currentMessage] })
         });
+        // const feedbackResponse = fetch('/api/generateFeedbackResponse', {
+        //     method: 'POST',
+        //     headers: {
+        //         'Content-Type': 'application/json'
+        //     },
+        //     body: JSON.stringify({ messages: [...chatContext, currentMessage] })
+        // });
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
@@ -304,14 +326,13 @@ function AdvancedAudioRecorder() {
         setPlaybackActive(false)
         while (true) {
             const { done, value } = await reader.read();
-            if (done) break;
 
             const textChunk = decoder.decode(value, { stream: true });
             completeText += textChunk;
             const sentences = completeText.match(/(.*?[.!?])\s+/gm);
             if (sentences) {
                 const message = sentences.join('').replace(processedText, '');
-                const audioBuffer = await getTextToVoice(processedText, message, selectedVoice);
+                const audioBuffer = await getTextToVoice(processedText, message, selectedTTSVoice);
                 console.log('Adding to audioToPlay:', new Date() - start);
 
                 if (audioBuffer) {
@@ -319,165 +340,174 @@ function AdvancedAudioRecorder() {
                     processedText += message;
                 }
             }
-            console.log(textChunk, '\n', completeText, '\n', processedText);
+            if (done) {
+                // Putting at the end to ensure the last message is processed
+                // I suspect done can happen at the same time as the final value?
+
+                console.log("Done is true, what is value", value)
+                break;
+            }
+            console.log("What is textChunk:", textChunk, '\nWhat is complete text', completeText, '\nWhat is processedText: ', processedText);
         }
-    
-    setChatContext([...chatContext, currentMessage, { role: 'assistant', content: completeText }]);
-    setTranscription('')
-    transcriptRef.current = ''
-}
 
-async function getTextToVoice(priorText: string, currentSentence: string, voice: string): Promise<AudioBuffer | undefined> {
-    if (!currentSentence || currentSentence === '') {
-        console.log('No text to process');
-        return undefined;
+        console.log('Resolving feedback', new Date());
+        // const feedback = await feedbackResponse;
+        // const { text } = await feedback.json();
+        setChatContext([...chatContext, currentMessage, { role: 'assistant', content: processedText }]);
+        // setChatContext([...chatContext, currentMessage, { role: 'feedback', content: text }, { role: 'assistant', content: processedText }]);
+        setTranscription('')
+        transcriptRef.current = ''
     }
 
-    const response = await fetch('/api/generateVoiceResponse', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ previousText: priorText, currentSentence, voice: voice })
-    });
-    console.log('Response:', response, response.body);
-    if (!response.ok) {
-        throw new Error('Network response was not ok');
-    }
-    if (!response.body) {
-        throw new Error('Response body is undefined');
-    }
-    // Anything audioContext related should be in a hook
-    try {
-        const playbackContext = new AudioContext;
-        const audioChunks = [];
-
-        const reader = response.body.getReader();
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            audioChunks.push(value);
+    async function getTextToVoice(priorText: string, currentSentence: string, voice: string): Promise<AudioBuffer | undefined> {
+        if (!currentSentence || currentSentence === '') {
+            console.log('No text to process');
+            return undefined;
         }
-        const arrayBuffer = await new Blob(audioChunks).arrayBuffer();
-        const audioData = await playbackContext.decodeAudioData(arrayBuffer);
-        return audioData
-    } catch (error) {
-        console.error('Error processing audio data:', error);
-    }
-}
 
-return (
-    <div className="p-4 max-w-md mx-auto">
-        <h1 className="text-2xl font-bold mb-4">Advanced Audio Recorder</h1>
-        <div className="mb-4">
-            <label className="block mb-2">Select Audio Input:</label>
-            <select
-                value={selectedInput}
-                onChange={(e) => setSelectedInput(e.target.value)}
-                className="w-full p-2 border rounded"
-            >
-                {audioInputs.map((device) => (
-                    <option key={device.deviceId} value={device.deviceId}>
-                        {device.label || `Microphone ${device.deviceId.slice(0, 5)}`}
-                    </option>
-                ))}
-            </select>
-        </div>
-        {/* <div className="mb-4">
-                <label className="block mb-2">Select Audio Output:</label>
-                <select
-                    value={selectedOutput}
-                    onChange={(e) => setSelectedOutput(e.target.value)}
-                    className="w-full p-2 border rounded"
+        const response = await fetch('/api/generateVoiceResponse', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ previousText: priorText, currentSentence, voice: voice })
+        });
+
+        if (!response.ok) {
+            throw new Error('Network response was not ok');
+        }
+        if (!response.body) {
+            throw new Error('Response body is undefined');
+        }
+        // Anything audioContext related should be in a hook
+        try {
+            const playbackContext = new AudioContext;
+            const audioChunks = [];
+
+            const reader = response.body.getReader();
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                audioChunks.push(value);
+            }
+            const arrayBuffer = await new Blob(audioChunks).arrayBuffer();
+            const audioData = await playbackContext.decodeAudioData(arrayBuffer);
+            return audioData
+        } catch (error) {
+            console.error('Error processing audio data:', error);
+        }
+    }
+
+    return (
+        <div className="p-4 w-full mx-auto flex flex-row">
+            <div className='w-1/2 px-40 mt-10'>
+                <h1 className="text-2xl font-bold mb-4">Audio Recorder Settings</h1>
+                <div className="mb-4">
+                    <label className="block mb-2">Select Audio Input:</label>
+                    <select
+                        value={selectedInput}
+                        onChange={(e) => setSelectedInput(e.target.value)}
+                        className="w-full p-2 border rounded"
+                    >
+                        {audioInputs.map((device) => (
+                            <option key={device.deviceId} value={device.deviceId}>
+                                {device.label || `Microphone ${device.deviceId.slice(0, 5)}`}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+                <div className="mb-4">
+                    <label className="block mb-2">Select Voice:</label>
+                    <select
+                        value={selectedTTSVoice}
+                        onChange={(e) => setVoice(e.target.value)}
+                        className="w-full p-2 border rounded"
+                    >
+                        {availableTTSVoices.map((voice) => (
+                            <option key={voice} value={voice}>
+                                {voice}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+                <button
+                    className={`px-4 py-2 rounded ${isListeningIndicator ? 'bg-red-500' : 'bg-green-500'} text-white mb-4`}
+                    onClick={isListeningIndicator ? stopListening : startListening}
                 >
-                    {audioOutputs.map((device) => (
-                        <option key={device.deviceId} value={device.deviceId}>
-                            {device.label || `Microphone ${device.deviceId.slice(0, 5)}`}
-                        </option>
-                    ))}
-                </select>
-            </div> */}
-        <div className="mb-4">
-            <label className="block mb-2">Select Voice:</label>
-            <select
-                value={selectedVoice}
-                onChange={(e) => setVoice(e.target.value)}
-                className="w-full p-2 border rounded"
-            >
-                {availableVoices.map((voice) => (
-                    <option key={voice} value={voice}>
-                        {voice}
-                    </option>
-                ))}
-            </select>
-        </div>
-        <button
-            className={`px-4 py-2 rounded ${isListening ? 'bg-red-500' : 'bg-green-500'} text-white mb-4`}
-            onClick={isListening ? stopListening : startListening}
-        >
-            {isListening ? 'Stop Listening' : 'Start Listening'}
-        </button>
-        <div className="mb-4">
-            <label className="block mb-2">
-                Current Volume: {volume === -Infinity ? '-∞' : volume.toFixed(2)} dB
-            </label>
-            <div className="w-full bg-gray-200 rounded-full h-2.5">
-                <div
-                    className="bg-blue-600 h-2.5 rounded-full"
-                    style={{ width: `${Math.max(0, (volume + 100) / 100 * 100)}%` }}
-                ></div>
+                    {isListeningIndicator ? 'Stop Listening' : 'Start Listening'}
+                </button>
+                <div className="mb-4">
+                    <label className="block mb-2">
+                        Current Volume: {volume === -Infinity ? '-∞' : volume.toFixed(2)} dB
+                    </label>
+                    <div className="w-full bg-gray-200 rounded-full h-2.5">
+                        <div
+                            className="bg-blue-600 h-2.5 rounded-full"
+                            style={{ width: `${Math.max(0, (volume + 100) / 100 * 100)}%` }}
+                        ></div>
+                    </div>
+                </div>
+                <div className="mb-4">
+                    <label className="block mb-2">
+                        Silence Threshold: {silenceThreshold} dB
+                    </label>
+                    <input
+                        type="range"
+                        min="-100"
+                        max="0"
+                        value={silenceThreshold}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSilenceThreshold(Number(e.target.value))}
+                        className="w-full"
+                    />
+                </div>
+                <div className="mb-4">
+                    <label className="block mb-2">
+                        Short Silence Duration: {shortSilenceDuration} ms
+                    </label>
+                    <input
+                        type="range"
+                        min="100"
+                        max="2000"
+                        step="100"
+                        value={shortSilenceDuration}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setShortSilenceDuration(Number(e.target.value))}
+                        className="w-full"
+                    />
+                </div>
+                <div className="mb-4">
+                    <label className="block mb-2">
+                        Long Silence Duration: {longSilenceDuration} ms
+                    </label>
+                    <input
+                        type="range"
+                        min="1000"
+                        max="5000"
+                        step="100"
+                        value={longSilenceDuration}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setLongSilenceDuration(Number(e.target.value))}
+                        className="w-full"
+                    />
+                </div>
+                <div className={`p-4 rounded ${isSilent ? 'bg-red-200' : 'bg-green-200'}`}>
+                    {isSilent ? 'Silence Detected' : 'Audio Detected'}
+                </div>
+                <div className={`p-4 rounded mt-4 ${isRecording ? 'bg-yellow-200' : 'bg-gray-200'}`}>
+                    Recording Status: {isRecording ? 'Recording' : 'Not Recording'}
+                </div>
+            </div>
+            <div className='w-1/2'>
+                {chatContext.map((message, index) => <div key={index}>
+                    {message.role !== 'feedback'
+                        ? <p className={`p-2 rounded ${COLOR_MAP[message.role]}`}>{message.content}</p>
+                        : <Accordion className='w-full'>
+                            <AccordionItem key="1" aria-label='Feedback' title='Feedback'>
+                                {message.content}
+                            </AccordionItem>
+                          </Accordion>
+                    }</div>)}
             </div>
         </div>
-        <div className="mb-4">
-            <label className="block mb-2">
-                Silence Threshold: {silenceThreshold} dB
-            </label>
-            <input
-                type="range"
-                min="-100"
-                max="0"
-                value={silenceThreshold}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSilenceThreshold(Number(e.target.value))}
-                className="w-full"
-            />
-        </div>
-        <div className="mb-4">
-            <label className="block mb-2">
-                Short Silence Duration: {shortSilenceDuration} ms
-            </label>
-            <input
-                type="range"
-                min="100"
-                max="2000"
-                step="100"
-                value={shortSilenceDuration}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setShortSilenceDuration(Number(e.target.value))}
-                className="w-full"
-            />
-        </div>
-        <div className="mb-4">
-            <label className="block mb-2">
-                Long Silence Duration: {longSilenceDuration} ms
-            </label>
-            <input
-                type="range"
-                min="1000"
-                max="5000"
-                step="100"
-                value={longSilenceDuration}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setLongSilenceDuration(Number(e.target.value))}
-                className="w-full"
-            />
-        </div>
-        <div className={`p-4 rounded ${isSilent ? 'bg-red-200' : 'bg-green-200'}`}>
-            {isSilent ? 'Silence Detected' : 'Audio Detected'}
-        </div>
-        <div className={`p-4 rounded mt-4 ${isRecording ? 'bg-yellow-200' : 'bg-gray-200'}`}>
-            Recording Status: {isRecording ? 'Recording' : 'Not Recording'}
-        </div>
-        <div>{transcription}</div>
-    </div>
-);
+    );
 };
 
 export default AdvancedAudioRecorder;
