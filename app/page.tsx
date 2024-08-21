@@ -39,27 +39,32 @@ const COLOR_MAP = {
 const OPENAI_VOICES = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer']
 
 function AdvancedAudioRecorder() {
-    // Convert to ref?
-    const [isListeningIndicator, setIsListening] = useState<boolean>(false);
-    const [isRecording, setIsRecording] = useState<boolean>(false);
-    const [silenceThreshold, setSilenceThreshold] = useState<number>(-38);
+    
+    //Will be hardcoded eventually
+    const [volume, setVolume] = useState<number>(-Infinity);
     const [shortSilenceDuration, setShortSilenceDuration] = useState<number>(500);
     const [longSilenceDuration, setLongSilenceDuration] = useState<number>(2000);
-
+    const [silenceThreshold, setSilenceThreshold] = useState<number>(-38);
+    
     // Updating UI, keep as state
-    const [volume, setVolume] = useState<number>(-Infinity);
-    const [isSilent, setIsSilent] = useState<boolean>(true);
+    const [chatContext, setChatContext] = useState<{ role: string; content: string; }[]>([]);
+    const [isListening, setIsListening] = useState<boolean>(false);
+    const [isRecordingStatus, setIsRecording] = useState<boolean>(false);
+    const [isSilentStatus, setIsSilent] = useState<boolean>(true);
     const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
     const [selectedInput, setSelectedInput] = useState<string>('');
+    const [availableTTSVoices, setAvailableVoices] = useState<string[]>([]);
+    const [selectedTTSVoice, setVoice] = useState<string>('');
+    
+    
+    // Unsure about these
     const [transcription, setTranscription] = useState<string>('');
     const [sendTranscript, setSendTranscript] = useState<boolean>(false);
     const [gettingTranscriptData, setGettingTranscriptData] = useState<boolean>(false);
-    const [availableTTSVoices, setAvailableVoices] = useState<string[]>([]);
-    const [selectedTTSVoice, setVoice] = useState<string>('');
     const [playbackActive, setPlaybackActive] = useState<boolean>(false);
-    // const [audioToPlay, setAudioToPlay] = useState<AudioBuffer[]>([]);
-    const [chatContext, setChatContext] = useState<{ role: string; content: string; }[]>([]);
 
+
+    // Keep as ref
     const audioToPlay = useRef<AudioBuffer[]>([]);
     const audioQueue = useRef<Blob[]>([]);
     const isRecordingRef = useRef(false);
@@ -72,86 +77,9 @@ function AdvancedAudioRecorder() {
     const audioChunk = useRef<Blob | null>(null);
     const stream = useRef<MediaStream | null>(null);
     const longSilenceTimer = useRef<NodeJS.Timeout | null>(null);
-    const transcriptRef = useRef<string>('');
+    const currentTranscribedVoiceText = useRef<string>('');
 
-    useEffect(() => {
-        console.log('Audio to play:', audioToPlay.current.length, 'Playback active:', playbackActive);
-        if (audioContext.current && audioToPlay.current.length > 0 && playbackActive === false) {
-            const source = audioContext.current.createBufferSource();
-            const bufferData = audioToPlay.current.shift();
-            if (bufferData) {
-                setPlaybackActive(true);
-                source.buffer = bufferData;
-                source.connect(audioContext.current.destination);
-                source.onended = () => {
-                    setPlaybackActive(false);
-                    console.log('Playback ended');
-                }
-                source.start();
-            }
-        }
-    }, [audioToPlay.current.length, playbackActive]);
-
-    useEffect(() => {
-        async function loadAudioDevices(): Promise<void> {
-            try {
-                const devices = await navigator.mediaDevices.enumerateDevices();
-                const audioInputs = devices.filter(device => device.kind === 'audioinput');
-                setAudioInputs(audioInputs);
-               
-                if (audioInputs.length > 0) {
-                    setSelectedInput(audioInputs.filter(i => i.label.includes('Default'))[0].deviceId);
-                }
-                // console.log('Audio devices loaded:', audioInputs);
-            } catch (error) {
-                console.error('Error loading audio devices:', error);
-            }
-        }
-        loadAudioDevices();
-        return () => {
-            stopListening();
-        };
-    }, []);
-
-    useEffect(() => {
-        isRecordingRef.current = isRecording;
-    }, [isRecording]);
-
-    // Get available voices from the ElevenLabs API
-    useEffect(() => {
-
-        async function fetchAvailableVoices() {
-            const response = await fetch('https://api.elevenlabs.io/v1/voices');
-            const data = await response.json();
-            setAvailableVoices(data.voices.map((i: { voice_id: string, name: string }) => i.name));
-            setVoice(data.voices[0].name);
-        }
-        if (true) {
-            setAvailableVoices(OPENAI_VOICES);
-            setVoice(OPENAI_VOICES[0]);
-        } else {
-            fetchAvailableVoices();
-        }
-    }, []);
-
-
-    useEffect(() => {
-        if (sendTranscript && !gettingTranscriptData && transcription.length > 0) {
-            console.log('In useEffect to send transcript', transcription, gettingTranscriptData, sendTranscript);
-            // Somehow this is getting called twice and doing weird things...
-            
-            handleLongSilence(transcription);
-            setSendTranscript(false);
-        }
-    }, [sendTranscript, transcription, gettingTranscriptData]);
-
-
-    // Handles getting the user audio transcribed
-    useEffect(() => {
-        if (audioQueue.current.length > 0 && !gettingTranscriptData) {
-            processQueue(); // Process the queue whenever there's new data
-        }
-    }, [audioQueue.current.length, gettingTranscriptData]);
+    
 
 
 
@@ -162,10 +90,10 @@ function AdvancedAudioRecorder() {
             const formData = new FormData();
             formData.append('file', audioChunk, 'audio.webm');
             formData.append('model', 'whisper-1');
-            formData.append('previousTranscript', transcriptRef.current);
+            formData.append('previousTranscript', currentTranscribedVoiceText.current);
             const results = await getVoiceTranscription(formData);
             setTranscription((prev) => prev + ' ' + results);
-            transcriptRef.current = results;
+            currentTranscribedVoiceText.current = results;
             setGettingTranscriptData(false);
         }
     }
@@ -289,44 +217,13 @@ function AdvancedAudioRecorder() {
     }, [silenceThreshold, shortSilenceDuration, longSilenceDuration, startRecording]);
 
 
-
-    
-
-    
-
-
-
-
-    /**
-     * Adds the current transcription to the chat and resets the transcription state
-     */
-    async function handleLongSilence(t: string): void {
-        const start = new Date();
-        console.log('Long silence detected. Sending full transcription for processing.');
-
-        const currentMessage = { role: 'user', content: t };
-        const response = await fetch('/api/generateTextResponse', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ messages: [...chatContext, currentMessage] })
-        });
-       
-        let processedText = await processTextStream(response, start);
-
-        setChatContext([...chatContext, currentMessage, { role: 'assistant', content: processedText }]);
-        setTranscription('')
-        transcriptRef.current = ''
-    }
-
-    async function processTextStream(response: Response, start: Date) {
-        const reader = response.body.getReader();
+    const processTextStream = useCallback(async function processTextStream(response: Response, start: Date) {
+        const reader = response.body?.getReader();
         const decoder = new TextDecoder();
         let processedText = '';
         let completeText = '';
 
-        while (true) {
+        while (true && reader) {
             const { done, value } = await reader.read();
 
             const textChunk = decoder.decode(value, { stream: true });
@@ -344,21 +241,49 @@ function AdvancedAudioRecorder() {
                 }
             }
             if (done) {
-                // Make sure we got the last bit of text in case it doesn't end with a punctuation mark
-                const message = completeText.replace(processedText, '');
-                const audioBuffer = await getTextToVoice(processedText, message, selectedTTSVoice);
-                console.log('Adding to audioToPlay:', new Date() - start);
 
-                if (audioBuffer) {
-                    audioToPlay.current.push(audioBuffer);
-                    processedText += message;
-                }
+                // TODO: Need to decide if I want truncated text or not, maybe easier to not?
+                // Make sure we got the last bit of text in case it doesn't end with a punctuation mark
+                // const message = completeText.replace(processedText, '');
+                // const audioBuffer = await getTextToVoice(processedText, message, selectedTTSVoice);
+                // console.log('Adding to audioToPlay:', new Date() - start);
+
+                // if (audioBuffer) {
+                //     audioToPlay.current.push(audioBuffer);
+                //     processedText += message;
+                // }
                 break;
             }
             console.log("What is textChunk:", textChunk, '\nWhat is processedText: ', processedText);
         }
         return processedText;
-    }
+    }, [selectedTTSVoice]);
+
+
+    /**
+     * Adds the current transcription to the chat and resets the transcription state
+     */
+    const handleLongSilence = useCallback(async function handleLongSilence(t: string): Promise<void> {
+        const start = new Date();
+        console.log('Long silence detected. Sending full transcription for processing.');
+
+        const currentMessage = { role: 'user', content: t };
+        const response = await fetch('/api/generateTextResponse', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ messages: [...chatContext, currentMessage] })
+        });
+       
+        let processedText = await processTextStream(response, start);
+
+        setChatContext([...chatContext, currentMessage, { role: 'assistant', content: processedText }]);
+        setTranscription('')
+        currentTranscribedVoiceText.current = ''
+    },[chatContext, processTextStream]);
+
+    
 
     async function getTextToVoice(priorText: string, currentSentence: string, voice: string): Promise<AudioBuffer | undefined> {
         if (!currentSentence || currentSentence === '') {
@@ -391,12 +316,91 @@ function AdvancedAudioRecorder() {
                 audioChunks.push(value);
             }
             const arrayBuffer = await new Blob(audioChunks).arrayBuffer();
-            const audioData = await audioContext.current.decodeAudioData(arrayBuffer);
+            const audioData = await audioContext.current?.decodeAudioData(arrayBuffer);
             return audioData
         } catch (error) {
             console.error('Error processing audio data:', error);
         }
     }
+
+    useEffect(() => {
+        console.log('Audio to play:', audioToPlay.current.length, 'Playback active:', playbackActive);
+        if (audioContext.current && audioToPlay.current.length > 0 && playbackActive === false) {
+            const source = audioContext.current.createBufferSource();
+            const bufferData = audioToPlay.current.shift();
+            if (bufferData) {
+                setPlaybackActive(true);
+                source.buffer = bufferData;
+                source.connect(audioContext.current.destination);
+                source.onended = () => {
+                    setPlaybackActive(false);
+                    console.log('Playback ended');
+                }
+                source.start();
+            }
+        }
+    }, [audioToPlay.current.length, playbackActive]);
+
+    useEffect(() => {
+        async function loadAudioDevices(): Promise<void> {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const audioInputs = devices.filter(device => device.kind === 'audioinput');
+                setAudioInputs(audioInputs);
+
+                if (audioInputs.length > 0) {
+                    setSelectedInput(audioInputs.filter(i => i.label.includes('Default'))[0].deviceId);
+                }
+                // console.log('Audio devices loaded:', audioInputs);
+            } catch (error) {
+                console.error('Error loading audio devices:', error);
+            }
+        }
+        loadAudioDevices();
+        return () => {
+            stopListening();
+        };
+    }, []);
+
+    useEffect(() => {
+        isRecordingRef.current = isRecordingStatus;
+    }, [isRecordingStatus]);
+
+    // Get available voices from the ElevenLabs API
+    useEffect(() => {
+
+        async function fetchAvailableVoices() {
+            const response = await fetch('https://api.elevenlabs.io/v1/voices');
+            const data = await response.json();
+            setAvailableVoices(data.voices.map((i: { voice_id: string, name: string }) => i.name));
+            setVoice(data.voices[0].name);
+        }
+        if (true) {
+            setAvailableVoices(OPENAI_VOICES);
+            setVoice(OPENAI_VOICES[0]);
+        } else {
+            fetchAvailableVoices();
+        }
+    }, []);
+
+
+    useEffect(() => {
+        if (sendTranscript && !gettingTranscriptData && transcription.length > 0 && audioQueue.current.length === 0) {
+            console.log('In useEffect to send transcript', transcription, gettingTranscriptData, sendTranscript);
+            // Somehow this is getting called twice and doing weird things...
+
+            handleLongSilence(transcription);
+            setSendTranscript(false);
+        }
+    }, [sendTranscript, transcription, gettingTranscriptData, handleLongSilence]);
+
+
+    // Handles getting the user audio transcribed
+    useEffect(() => {
+        if (audioQueue.current.length > 0 && !gettingTranscriptData) {
+            processQueue(); // Process the queue whenever there's new data
+        }
+    }, [audioQueue.current.length, gettingTranscriptData]);
 
     return (
         <div className="p-4 w-full mx-auto flex flex-row">
@@ -431,10 +435,10 @@ function AdvancedAudioRecorder() {
                     </select>
                 </div>
                 <button
-                    className={`px-4 py-2 rounded ${isListeningIndicator ? 'bg-red-500' : 'bg-green-500'} text-white mb-4`}
-                    onClick={isListeningIndicator ? stopListening : startListening}
+                    className={`px-4 py-2 rounded ${isListening ? 'bg-red-500' : 'bg-green-500'} text-white mb-4`}
+                    onClick={isListening ? stopListening : startListening}
                 >
-                    {isListeningIndicator ? 'Stop Listening' : 'Start Listening'}
+                    {isListening ? 'Stop Listening' : 'Start Listening'}
                 </button>
                 <div className="mb-4">
                     <label className="block mb-2">
@@ -488,11 +492,11 @@ function AdvancedAudioRecorder() {
                         className="w-full"
                     />
                 </div>
-                <div className={`p-4 rounded ${isSilent ? 'bg-red-200' : 'bg-green-200'}`}>
-                    {isSilent ? 'Silence Detected' : 'Audio Detected'}
+                <div className={`p-4 rounded ${isSilentStatus ? 'bg-red-200' : 'bg-green-200'}`}>
+                    {isSilentStatus ? 'Silence Detected' : 'Audio Detected'}
                 </div>
-                <div className={`p-4 rounded mt-4 ${isRecording ? 'bg-yellow-200' : 'bg-gray-200'}`}>
-                    Recording Status: {isRecording ? 'Recording' : 'Not Recording'}
+                <div className={`p-4 rounded mt-4 ${isRecordingStatus ? 'bg-yellow-200' : 'bg-gray-200'}`}>
+                    Recording Status: {isRecordingStatus ? 'Recording' : 'Not Recording'}
                 </div>
             </div>
             <div className='w-1/2'>
