@@ -133,8 +133,10 @@ function AdvancedAudioRecorder() {
         }
         setIsListening(false);
         setIsRecording(false);
+        setPlaybackActive(false);
         setVolume(-Infinity);
         setIsSilent(true);
+        audioToPlay.current = [];
         console.log('Listening stopped');
     }
 
