@@ -1,5 +1,48 @@
-export default function useAudioContext(checkAudio){
-    async function startListening(): Promise<void> {
+import { useState, useRef, useCallback } from "react";
+
+interface AudioContextRef {
+    current: AudioContext | null;
+}
+
+interface AnalyserNodeRef {
+    current: AnalyserNode | null;
+}
+
+interface MediaRecorderRef {
+    current: MediaRecorder | null;
+}
+
+interface Float32ArrayRef {
+    current: Float32Array | null;
+}
+
+interface NumberRef {
+    current: number | null;
+}
+
+export default function useAudioContext() {
+    const [isListening, setIsListening] = useState<boolean>(false);
+    const [volume, setVolume] = useState<number>(-Infinity);
+    const [isSilent, setIsSilent] = useState<boolean>(true);
+    const [shortSilenceDuration, setShortSilenceDuration] = useState<number>(500);
+    const [longSilenceDuration, setLongSilenceDuration] = useState<number>(1000);
+    const [silenceThreshold, setSilenceThreshold] = useState<number>(-38);
+    const [sendTranscript, setSendTranscript] = useState<boolean>(false);
+    const [isRecordingStatus, setIsRecording] = useState<boolean>(false);
+
+
+
+    const audioContext: AudioContextRef = useRef(null);
+    const stream = useRef<MediaStream | null>(null);
+    const analyser: AnalyserNodeRef = useRef(null);
+    const dataArray: Float32ArrayRef = useRef(null);
+    const silenceStartTime: NumberRef = useRef(null);
+    const longSilenceTimer = useRef<NodeJS.Timeout | null>(null);
+    const animationFrame: NumberRef = useRef(null);
+    const isRecordingRef = useRef(false);
+
+
+    async function startListening(selectedInput: string): Promise<boolean> {
         try {
             console.log('Starting to listen...');
             stream.current = await navigator.mediaDevices.getUserMedia({
@@ -15,10 +58,11 @@ export default function useAudioContext(checkAudio){
 
             setIsListening(true);
             checkAudio();
-            getTextToVoice('', 'Hello, this is a test', 'Jessica');
             console.log('Listening started');
+            return true
         } catch (error) {
             console.error('Error accessing microphone:', error);
+            return false
         }
     }
 
@@ -28,27 +72,17 @@ export default function useAudioContext(checkAudio){
             audioContext.current.close();
             audioContext.current = null;
         }
-        if (animationFrame.current) {
-            cancelAnimationFrame(animationFrame.current);
-        }
-        if (mediaRecorder.current && mediaRecorder.current.state !== 'inactive') {
-            mediaRecorder.current.stop();
-        }
+
         if (stream.current) {
             stream.current.getTracks().forEach(track => track.stop());
             stream.current = null;
         }
-        if (longSilenceTimer.current) {
-            clearTimeout(longSilenceTimer.current);
-        }
+
         setIsListening(false);
-        setIsRecording(false);
-        setVolume(-Infinity);
-        setIsSilent(true);
         console.log('Listening stopped');
     }
 
-    const checkAudio = useCallback(() => {
+    const checkAudio = useCallback(function checkAudio() {
         if (!analyser.current || !dataArray.current) return;
 
         analyser.current.getFloatTimeDomainData(dataArray.current);
@@ -56,23 +90,18 @@ export default function useAudioContext(checkAudio){
         const dbFS: number = 20 * Math.log10(rms);
         setVolume(dbFS);
 
-
-        // TODO: Clarify what happens during silence
-
         if (dbFS < silenceThreshold) {
             // Set silence start time if not already set
             if (!silenceStartTime.current) {
-                console.log('Setting silence start time');
                 silenceStartTime.current = Date.now();
-                console.log('Starting long silence timer');
                 longSilenceTimer.current = setTimeout(() => setSendTranscript(true), longSilenceDuration);
             } else {
                 const silenceDuration = Date.now() - silenceStartTime.current;
 
                 if (silenceDuration > shortSilenceDuration && isRecordingRef.current) {
-                    console.log('Stopping recording due to short silence');
-                    stopRecording();
-                    setIsRecording(false);
+                    // stopRecording();
+                    // setIsRecording(false);
+                    return { recording: false }
                 }
             }
             setIsSilent(true);
@@ -87,13 +116,25 @@ export default function useAudioContext(checkAudio){
             setIsSilent(false);
             // Start recording if not already recording
             if (!isRecordingRef.current) {
-                startRecording();
-                setIsRecording(true);
+                // startRecording();
+                // setIsRecording(true);
+                return { recording: true }
             }
         }
 
         animationFrame.current = requestAnimationFrame(checkAudio);
-    }, [silenceThreshold, shortSilenceDuration, longSilenceDuration, transcription]);
+    }, [silenceThreshold, shortSilenceDuration, longSilenceDuration]);
 
-    return { startListening, stopListening };
+    return {
+        startListening,
+        stopListening,
+        setShortSilenceDuration,
+        setLongSilenceDuration,
+        setSilenceThreshold,
+        isListening,
+        volume,
+        isSilent,
+        sendTranscript,
+        isRecordingStatus
+    };
 }

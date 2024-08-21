@@ -9,6 +9,7 @@ TODO:
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Accordion, AccordionItem } from '@nextui-org/react';
 import getVoiceTranscription from '@/actions/getVoiceTranscription';
+import useAudioContext from '@/hooks/useAudioContext';
 
 interface AudioContextRef {
     current: AudioContext | null;
@@ -39,17 +40,16 @@ const COLOR_MAP = {
 const OPENAI_VOICES = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer']
 
 function AdvancedAudioRecorder() {
-    
+
     //Will be hardcoded eventually
     const [volume, setVolume] = useState<number>(-Infinity);
     const [shortSilenceDuration, setShortSilenceDuration] = useState<number>(500);
     const [longSilenceDuration, setLongSilenceDuration] = useState<number>(1000);
     const [silenceThreshold, setSilenceThreshold] = useState<number>(-38);
-    
+
     // Updating UI (which includes audio playback), keep as state
     const [chatContext, setChatContext] = useState<{ role: string; content: string; }[]>([]);
     const [isListening, setIsListening] = useState<boolean>(false);
-    const [isRecordingStatus, setIsRecording] = useState<boolean>(false);
     const [isSilentStatus, setIsSilent] = useState<boolean>(true);
     const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
     const [selectedInput, setSelectedInput] = useState<string>('');
@@ -59,11 +59,11 @@ function AdvancedAudioRecorder() {
     // I think this is fine as state
     const [sendTranscript, setSendTranscript] = useState<boolean>(false);
     const [fetchingTranscriptData, setGettingTranscriptData] = useState<boolean>(false);
-    
+
     // Keep as ref
     const audioToPlay = useRef<AudioBuffer[]>([]);
     const audioQueue = useRef<Blob[]>([]);
-    const isRecordingRef = useRef(false);
+    const isRecordingStatus = useRef(false);
     const audioContext: AudioContextRef = useRef(null);
     const analyser: AnalyserNodeRef = useRef(null);
     const mediaRecorder: MediaRecorderRef = useRef(null);
@@ -75,7 +75,7 @@ function AdvancedAudioRecorder() {
     const longSilenceTimer = useRef<NodeJS.Timeout | null>(null);
     const currentTranscription = useRef<string>('');
 
-    
+
     async function processQueue(): Promise<void> {
         while (audioQueue.current.length > 0) {
             setGettingTranscriptData(true);
@@ -87,6 +87,35 @@ function AdvancedAudioRecorder() {
             const results = await getVoiceTranscription(formData);
             currentTranscription.current = results;
             setGettingTranscriptData(false);
+        }
+    }
+
+    const startRecording = useCallback(function startRecording(): void {
+        function handleDataAvailable(event: BlobEvent): void {
+            if (event.data.size > 0) {
+                audioChunk.current = event.data;
+            }
+        }
+
+        // When called creates a closure, can't see current state data
+        async function handleRecordingStop(): Promise<void> {
+            if (audioChunk.current) {
+                audioQueue.current.push(audioChunk.current);
+            }
+            mediaRecorder.current = null;
+        }
+
+        if (stream.current && !mediaRecorder.current) {
+            mediaRecorder.current = new MediaRecorder(stream.current, { mimeType: 'audio/webm' });
+            mediaRecorder.current.ondataavailable = handleDataAvailable;
+            mediaRecorder.current.onstop = handleRecordingStop;
+            mediaRecorder.current.start();
+        }
+    }, [])
+
+    function stopRecording(): void {
+        if (mediaRecorder.current && mediaRecorder.current.state !== 'inactive') {
+            mediaRecorder.current.stop();
         }
     }
 
@@ -132,41 +161,12 @@ function AdvancedAudioRecorder() {
             clearTimeout(longSilenceTimer.current);
         }
         setIsListening(false);
-        setIsRecording(false);
+        isRecordingStatus.current = false;
         setPlaybackActive(false);
         setVolume(-Infinity);
         setIsSilent(true);
         audioToPlay.current = [];
         console.log('Listening stopped');
-    }
-
-    const startRecording = useCallback(function startRecording(): void {
-        function handleDataAvailable(event: BlobEvent): void {
-            if (event.data.size > 0) {
-                audioChunk.current = event.data;
-            }
-        }
-
-        // When called creates a closure, can't see current state data
-        async function handleRecordingStop(): Promise<void> {
-            if (audioChunk.current) {
-                audioQueue.current.push(audioChunk.current);
-            }
-            mediaRecorder.current = null;
-        }
-
-        if (stream.current && !mediaRecorder.current) {
-            mediaRecorder.current = new MediaRecorder(stream.current, { mimeType: 'audio/webm' });
-            mediaRecorder.current.ondataavailable = handleDataAvailable;
-            mediaRecorder.current.onstop = handleRecordingStop;
-            mediaRecorder.current.start();
-        }
-    }, [])
-
-    function stopRecording(): void {
-        if (mediaRecorder.current && mediaRecorder.current.state !== 'inactive') {
-            mediaRecorder.current.stop();
-        }
     }
 
     const checkAudio = useCallback(() => {
@@ -185,9 +185,9 @@ function AdvancedAudioRecorder() {
             } else {
                 const silenceDuration = Date.now() - silenceStartTime.current;
 
-                if (silenceDuration > shortSilenceDuration && isRecordingRef.current) {
+                if (silenceDuration > shortSilenceDuration && isRecordingStatus.current) {
                     stopRecording();
-                    setIsRecording(false);
+                    isRecordingStatus.current = false;
                 }
             }
             setIsSilent(true);
@@ -201,9 +201,9 @@ function AdvancedAudioRecorder() {
             }
             setIsSilent(false);
             // Start recording if not already recording
-            if (!isRecordingRef.current) {
+            if (!isRecordingStatus.current) {
                 startRecording();
-                setIsRecording(true);
+                isRecordingStatus.current = true;
             }
         }
 
@@ -235,7 +235,6 @@ function AdvancedAudioRecorder() {
                 }
             }
             if (done) {
-
                 // TODO: Need to decide if I want truncated text or not, maybe easier to not?
                 // Make sure we got the last bit of text in case it doesn't end with a punctuation mark
                 // const message = completeText.replace(processedText, '');
@@ -269,14 +268,14 @@ function AdvancedAudioRecorder() {
             },
             body: JSON.stringify({ messages: [...chatContext, currentMessage] })
         });
-       
+
         let processedText = await processTextStream(response, start);
 
         setChatContext([...chatContext, currentMessage, { role: 'assistant', content: processedText }]);
         currentTranscription.current = ''
-    },[chatContext, processTextStream]);
+    }, [chatContext, processTextStream]);
 
-    
+
 
     async function getTextToVoice(priorText: string, currentSentence: string, voice: string): Promise<AudioBuffer | undefined> {
         if (!currentSentence || currentSentence === '') {
@@ -297,11 +296,10 @@ function AdvancedAudioRecorder() {
         }
         if (!response.body) {
             throw new Error('Response body is undefined');
+
         }
-        // Anything audioContext related should be in a hook
         try {
             const audioChunks = [];
-
             const reader = response.body.getReader();
             while (true) {
                 const { done, value } = await reader.read();
@@ -339,14 +337,13 @@ function AdvancedAudioRecorder() {
             try {
                 const devices = await navigator.mediaDevices.enumerateDevices();
                 const audioInputs = devices.filter(device => device.kind === 'audioinput');
-                setAudioInputs(audioInputs);
-
                 if (audioInputs.length > 0) {
                     setSelectedInput(audioInputs.filter(i => i.label.includes('Default'))[0].deviceId);
+                    setAudioInputs(audioInputs);
                 }
-                // console.log('Audio devices loaded:', audioInputs);
             } catch (error) {
                 console.error('Error loading audio devices:', error);
+                setAudioInputs([]);
             }
         }
         loadAudioDevices();
@@ -354,10 +351,6 @@ function AdvancedAudioRecorder() {
             stopListening();
         };
     }, []);
-
-    useEffect(() => {
-        isRecordingRef.current = isRecordingStatus;
-    }, [isRecordingStatus]);
 
     // Get available voices from the ElevenLabs API
     useEffect(() => {
@@ -484,8 +477,8 @@ function AdvancedAudioRecorder() {
                 <div className={`p-4 rounded ${isSilentStatus ? 'bg-red-200' : 'bg-green-200'}`}>
                     {isSilentStatus ? 'Silence Detected' : 'Audio Detected'}
                 </div>
-                <div className={`p-4 rounded mt-4 ${isRecordingStatus ? 'bg-yellow-200' : 'bg-gray-200'}`}>
-                    Recording Status: {isRecordingStatus ? 'Recording' : 'Not Recording'}
+                <div className={`p-4 rounded mt-4 ${isRecordingStatus.current ? 'bg-yellow-200' : 'bg-gray-200'}`}>
+                    Recording Status: {isRecordingStatus.current ? 'Recording' : 'Not Recording'}
                 </div>
             </div>
             <div className='w-1/2'>
@@ -496,7 +489,7 @@ function AdvancedAudioRecorder() {
                             <AccordionItem key="1" aria-label='Feedback' title='Feedback'>
                                 {message.content}
                             </AccordionItem>
-                          </Accordion>
+                        </Accordion>
                     }</div>)}
             </div>
         </div>
