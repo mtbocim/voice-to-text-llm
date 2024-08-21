@@ -43,10 +43,10 @@ function AdvancedAudioRecorder() {
     //Will be hardcoded eventually
     const [volume, setVolume] = useState<number>(-Infinity);
     const [shortSilenceDuration, setShortSilenceDuration] = useState<number>(500);
-    const [longSilenceDuration, setLongSilenceDuration] = useState<number>(2000);
+    const [longSilenceDuration, setLongSilenceDuration] = useState<number>(1000);
     const [silenceThreshold, setSilenceThreshold] = useState<number>(-38);
     
-    // Updating UI, keep as state
+    // Updating UI (which includes audio playback), keep as state
     const [chatContext, setChatContext] = useState<{ role: string; content: string; }[]>([]);
     const [isListening, setIsListening] = useState<boolean>(false);
     const [isRecordingStatus, setIsRecording] = useState<boolean>(false);
@@ -55,15 +55,11 @@ function AdvancedAudioRecorder() {
     const [selectedInput, setSelectedInput] = useState<string>('');
     const [availableTTSVoices, setAvailableVoices] = useState<string[]>([]);
     const [selectedTTSVoice, setVoice] = useState<string>('');
-    
-    
-    // Unsure about these
-    const [transcription, setTranscription] = useState<string>('');
-    const [sendTranscript, setSendTranscript] = useState<boolean>(false);
-    const [gettingTranscriptData, setGettingTranscriptData] = useState<boolean>(false);
     const [playbackActive, setPlaybackActive] = useState<boolean>(false);
-
-
+    // I think this is fine as state
+    const [sendTranscript, setSendTranscript] = useState<boolean>(false);
+    const [fetchingTranscriptData, setGettingTranscriptData] = useState<boolean>(false);
+    
     // Keep as ref
     const audioToPlay = useRef<AudioBuffer[]>([]);
     const audioQueue = useRef<Blob[]>([]);
@@ -77,23 +73,19 @@ function AdvancedAudioRecorder() {
     const audioChunk = useRef<Blob | null>(null);
     const stream = useRef<MediaStream | null>(null);
     const longSilenceTimer = useRef<NodeJS.Timeout | null>(null);
-    const currentTranscribedVoiceText = useRef<string>('');
+    const currentTranscription = useRef<string>('');
 
     
-
-
-
     async function processQueue(): Promise<void> {
         while (audioQueue.current.length > 0) {
-            const audioChunk = audioQueue.current.shift() as Blob;
             setGettingTranscriptData(true);
             const formData = new FormData();
+            const audioChunk = audioQueue.current.shift() as Blob;
             formData.append('file', audioChunk, 'audio.webm');
             formData.append('model', 'whisper-1');
-            formData.append('previousTranscript', currentTranscribedVoiceText.current);
+            formData.append('previousTranscript', currentTranscription.current);
             const results = await getVoiceTranscription(formData);
-            setTranscription((prev) => prev + ' ' + results);
-            currentTranscribedVoiceText.current = results;
+            currentTranscription.current = results;
             setGettingTranscriptData(false);
         }
     }
@@ -279,8 +271,7 @@ function AdvancedAudioRecorder() {
         let processedText = await processTextStream(response, start);
 
         setChatContext([...chatContext, currentMessage, { role: 'assistant', content: processedText }]);
-        setTranscription('')
-        currentTranscribedVoiceText.current = ''
+        currentTranscription.current = ''
     },[chatContext, processTextStream]);
 
     
@@ -385,22 +376,18 @@ function AdvancedAudioRecorder() {
 
 
     useEffect(() => {
-        if (sendTranscript && !gettingTranscriptData && transcription.length > 0 && audioQueue.current.length === 0) {
-            console.log('In useEffect to send transcript', transcription, gettingTranscriptData, sendTranscript);
-            // Somehow this is getting called twice and doing weird things...
-
-            handleLongSilence(transcription);
+        if (sendTranscript && !fetchingTranscriptData && currentTranscription.current.length > 0 && audioQueue.current.length === 0) {
+            handleLongSilence(currentTranscription.current)
             setSendTranscript(false);
         }
-    }, [sendTranscript, transcription, gettingTranscriptData, handleLongSilence]);
-
+    }, [sendTranscript, fetchingTranscriptData, handleLongSilence]);
 
     // Handles getting the user audio transcribed
     useEffect(() => {
-        if (audioQueue.current.length > 0 && !gettingTranscriptData) {
-            processQueue(); // Process the queue whenever there's new data
+        if (audioQueue.current.length > 0 && !fetchingTranscriptData) {
+            processQueue();
         }
-    }, [audioQueue.current.length, gettingTranscriptData]);
+    }, [audioQueue.current.length, fetchingTranscriptData]);
 
     return (
         <div className="p-4 w-full mx-auto flex flex-row">
