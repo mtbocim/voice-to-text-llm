@@ -61,7 +61,7 @@ function AdvancedAudioRecorder() {
     const [fetchingTranscriptData, setGettingTranscriptData] = useState<boolean>(false);
 
     // Keep as ref
-    const audioToPlay = useRef<AudioBuffer[]>([]);
+    const audioData = useRef<{audioBuffer:AudioBuffer, text:string}[]>([]);
     const audioQueue = useRef<Blob[]>([]);
     const isRecordingStatus = useRef(false);
     const audioContext: AudioContextRef = useRef(null);
@@ -74,8 +74,12 @@ function AdvancedAudioRecorder() {
     const stream = useRef<MediaStream | null>(null);
     const longSilenceTimer = useRef<NodeJS.Timeout | null>(null);
     const currentTranscription = useRef<string>('');
+    const spokenText = useRef<string>('');
 
 
+    /**
+     * Processes the audio queue and sends the audio to the OpenAI API for transcription
+     */
     async function processQueue(): Promise<void> {
         while (audioQueue.current.length > 0) {
             setGettingTranscriptData(true);
@@ -85,7 +89,8 @@ function AdvancedAudioRecorder() {
             formData.append('model', 'whisper-1');
             formData.append('previousTranscript', currentTranscription.current);
             const results = await getVoiceTranscription(formData);
-            currentTranscription.current = results;
+            currentTranscription.current = currentTranscription.current + ' ' + results;
+            console.log('currentTranscription in processQueue:', results);
             setGettingTranscriptData(false);
         }
     }
@@ -165,7 +170,7 @@ function AdvancedAudioRecorder() {
         setPlaybackActive(false);
         setVolume(-Infinity);
         setIsSilent(true);
-        audioToPlay.current = [];
+        audioData.current = [];
         console.log('Listening stopped');
     }
 
@@ -216,24 +221,37 @@ function AdvancedAudioRecorder() {
         const decoder = new TextDecoder();
         let processedText = '';
         let completeText = '';
-
+        //TODO: need a way to kill this if I stop listening process
         while (true && reader) {
             const { done, value } = await reader.read();
 
             const textChunk = decoder.decode(value, { stream: true });
             completeText += textChunk;
-            console.log('completeText:', completeText);
-            const sentences = completeText.match(/(.*?[:.!?])\s+/gm);
+            console.log('completeText:', completeText.replace('\n', ". "));
+            const sentences = completeText.match(/(.+?[.:!?\r\n])\s?/gm);
+            // const sentences = completeText.match(/(.+?[:.!?\r\n])\s*/gm);
             if (sentences) {
                 const message = sentences.join('').replace(processedText, '');
                 const audioBuffer = await getTextToVoice(processedText, message, selectedTTSVoice);
                 console.log('Adding to audioToPlay:', new Date() - start);
 
                 if (audioBuffer) {
-                    audioToPlay.current.push(audioBuffer);
+
+                    /* 
+                    Here I could do something like push({
+                        audioBuffer,
+                        text: message  // This would be the text that was used to generate the audio
+                    })
+                    
+                    */
+                    audioData.current.push({
+                        audioBuffer,
+                        text: message
+                    });
                     processedText += message;
                 }
             }
+            console.log('done:', done, 'isRecordingStatus:', isRecordingStatus.current);
             if (done) {
                 // TODO: Need to decide if I want truncated text or not, maybe easier to not?
                 // Make sure we got the last bit of text in case it doesn't end with a punctuation mark
@@ -247,34 +265,21 @@ function AdvancedAudioRecorder() {
                 // }
                 break;
             }
+
+            // For this to work well I need to track which audio is playing and then only use text up to that point
+            // if(isRecordingStatus.current) {
+            //     // Need to stop playback here
+            //     audioContext.current?.close();
+            //     audioData.current = [];
+            //     const text = spokenText.current;
+            //     spokenText.current = '';    
+            //     return text;
+            // }
+            
             console.log("What is textChunk:", textChunk, '\nWhat is processedText: ', processedText);
         }
         return processedText;
-    }, [selectedTTSVoice]);
-
-
-    /**
-     * Adds the current transcription to the chat and resets the transcription state
-     */
-    const handleLongSilence = useCallback(async function handleLongSilence(t: string): Promise<void> {
-        const start = new Date();
-        console.log('Long silence detected. Sending full transcription for processing.');
-
-        const currentMessage = { role: 'user', content: t };
-        const response = await fetch('/api/generateTextResponse', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ messages: [...chatContext, currentMessage] })
-        });
-
-        let processedText = await processTextStream(response, start);
-
-        setChatContext([...chatContext, currentMessage, { role: 'assistant', content: processedText }]);
-        currentTranscription.current = ''
-    }, [chatContext, processTextStream]);
-
+    }, [selectedTTSVoice, isRecordingStatus, spokenText]);
 
 
     async function getTextToVoice(priorText: string, currentSentence: string, voice: string): Promise<AudioBuffer | undefined> {
@@ -314,24 +319,53 @@ function AdvancedAudioRecorder() {
         }
     }
 
+    /**
+     * Adds the current transcription to the chat and resets the transcription state
+     */
+    const handleLongSilence = useCallback(async function handleLongSilence(t: string): Promise<void> {
+        const start = new Date();
+        console.log('Long silence detected. Sending full transcription for processing.');
+
+        const currentMessage = { role: 'user', content: t };
+        const response = await fetch('/api/generateTextResponse', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ messages: [...chatContext, currentMessage] })
+        });
+
+        let processedText = await processTextStream(response, start);
+        if (processedText.trim() === '') {
+            // Placeholder until I have a better idea of when this would happen
+            processedText = '...'
+        }
+        setChatContext([...chatContext, currentMessage, { role: 'assistant', content: processedText }]);
+        currentTranscription.current = ''
+    }, [chatContext, processTextStream]);
+
+    
+    // Plays the audio data
     useEffect(() => {
-        console.log('Audio to play:', audioToPlay.current.length, 'Playback active:', playbackActive);
-        if (audioContext.current && audioToPlay.current.length > 0 && playbackActive === false) {
+        console.log('Audio to play:', audioData.current.length, 'Playback active:', playbackActive);
+        if (audioContext.current && audioData.current.length > 0 && playbackActive === false) {
             const source = audioContext.current.createBufferSource();
-            const bufferData = audioToPlay.current.shift();
-            if (bufferData) {
+            const currentAudioData = audioData.current.shift();
+            if (currentAudioData) {
                 setPlaybackActive(true);
-                source.buffer = bufferData;
+                source.buffer = currentAudioData.audioBuffer;
                 source.connect(audioContext.current.destination);
                 source.onended = () => {
                     setPlaybackActive(false);
                     console.log('Playback ended');
                 }
                 source.start();
+                spokenText.current += currentAudioData.text;
             }
         }
-    }, [audioToPlay.current.length, playbackActive]);
+    }, [audioData.current.length, playbackActive]);
 
+    // Get available audio devices
     useEffect(() => {
         async function loadAudioDevices(): Promise<void> {
             try {
@@ -370,6 +404,7 @@ function AdvancedAudioRecorder() {
     }, []);
 
 
+    // Handles sending the transcript to the API for processing
     useEffect(() => {
         if (sendTranscript && !fetchingTranscriptData && currentTranscription.current.length > 0 && audioQueue.current.length === 0) {
             handleLongSilence(currentTranscription.current)

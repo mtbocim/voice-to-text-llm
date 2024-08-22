@@ -19,7 +19,7 @@ export async function POST(req: Request) {
                 model: anthropic('claude-3-5-sonnet-20240620'),
                 system: generalPersona,
                 messages:messages.filter(m=>m.role !== 'feedback'),
-                maxTokens: tokenCount,
+                maxTokens: 500,
             });
 
             for await (const chunk of textStream) {
