@@ -15,20 +15,8 @@ interface AudioContextRef {
     current: AudioContext | null;
 }
 
-interface AnalyserNodeRef {
-    current: AnalyserNode | null;
-}
-
 interface MediaRecorderRef {
     current: MediaRecorder | null;
-}
-
-interface Float32ArrayRef {
-    current: Float32Array | null;
-}
-
-interface NumberRef {
-    current: number | null;
 }
 
 const COLOR_MAP = {
@@ -40,45 +28,46 @@ const COLOR_MAP = {
 const OPENAI_VOICES = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer']
 
 function AdvancedAudioRecorder() {
-
+    const {
+        startListening,
+        stopListening,
+        setShortSilenceDuration,
+        setLongSilenceDuration,
+        setSilenceThreshold,
+        setSendTranscript,
+        volume,
+        sendTranscript,
+        isRecordingStatus,
+        isListeningStatus,
+        silenceThreshold,
+        shortSilenceDuration,
+        longSilenceDuration,
+        stream,
+        audioContext,
+    } = useAudioContext();
     //Will be hardcoded eventually
-    const [volume, setVolume] = useState<number>(-Infinity);
-    const [shortSilenceDuration, setShortSilenceDuration] = useState<number>(500);
-    const [longSilenceDuration, setLongSilenceDuration] = useState<number>(1000);
-    const [silenceThreshold, setSilenceThreshold] = useState<number>(-38);
+
 
     // Updating UI (which includes audio playback), keep as state
     const [chatContext, setChatContext] = useState<{ role: string; content: string; }[]>([]);
-    const [isListening, setIsListening] = useState<boolean>(false);
-    const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
-    const [selectedInput, setSelectedInput] = useState<string>('');
+    const [availableAudioDevices, setAvailableAudioDevices] = useState<MediaDeviceInfo[]>([]);
+    const [selectedAudioInput, setSelectedAudioInput] = useState<string>('');
     const [availableTTSVoices, setAvailableVoices] = useState<string[]>([]);
     const [selectedTTSVoice, setVoice] = useState<string>('');
     const [playbackActive, setPlaybackActive] = useState<boolean>(false);
     // I think this is fine as state
-    const [sendTranscript, setSendTranscript] = useState<boolean>(false);
     const [fetchingTranscriptData, setGettingTranscriptData] = useState<boolean>(false);
 
     // Keep as ref
     const audioData = useRef<{ audioBuffer: AudioBuffer, text: string }[]>([]);
     const speechToTextDataQueue = useRef<Blob[]>([]);
-    const isRecordingStatus = useRef(false);
-    const audioContext: AudioContextRef = useRef(null);
-    const analyser: AnalyserNodeRef = useRef(null);
     const mediaRecorder: MediaRecorderRef = useRef(null);
-    const dataArray: Float32ArrayRef = useRef(null);
-    const silenceStartTime: NumberRef = useRef(null);
-    const animationFrame: NumberRef = useRef(null);
     const audioChunk = useRef<Blob | null>(null);
-    const stream = useRef<MediaStream | null>(null);
-    const longSilenceTimer = useRef<NodeJS.Timeout | null>(null);
     const currentTranscription = useRef<string>('');
     const spokenText = useRef<string>('');
     const playbackActiveRef = useRef<boolean>(false);
 
-    useEffect(() => {
-        playbackActiveRef.current = playbackActive;
-    }, [playbackActive]);
+    
 
 
     /**
@@ -127,106 +116,6 @@ function AdvancedAudioRecorder() {
         }
     }
 
-    async function startListening(): Promise<void> {
-        try {
-            console.log('Starting to listen...');
-            stream.current = await navigator.mediaDevices.getUserMedia({
-                audio: { deviceId: selectedInput ? { exact: selectedInput } : undefined }
-            });
-            audioContext.current = new AudioContext();
-            analyser.current = audioContext.current.createAnalyser();
-            const source: MediaStreamAudioSourceNode = audioContext.current.createMediaStreamSource(stream.current);
-            source.connect(analyser.current);
-
-            analyser.current.fftSize = 2048;
-            dataArray.current = new Float32Array(analyser.current.fftSize);
-
-            setIsListening(true);
-            checkAudio();
-            console.log('Listening started');
-        } catch (error) {
-            console.error('Error accessing microphone:', error);
-        }
-    }
-
-    function stopListening(): void {
-        console.log('Stopping listening...');
-        if (audioContext.current) {
-            audioContext.current.close();
-            audioContext.current = null;
-        }
-        if (animationFrame.current) {
-            cancelAnimationFrame(animationFrame.current);
-        }
-        if (mediaRecorder.current && mediaRecorder.current.state !== 'inactive') {
-            mediaRecorder.current.stop();
-        }
-        if (stream.current) {
-            stream.current.getTracks().forEach(track => track.stop());
-            stream.current = null;
-        }
-        if (longSilenceTimer.current) {
-            clearTimeout(longSilenceTimer.current);
-        }
-        setIsListening(false);
-        isRecordingStatus.current = false;
-        setPlaybackActive(false);
-        setVolume(-Infinity);
-        audioData.current = [];
-        console.log('Listening stopped');
-    }
-
-    /**
-     * Controller function to check the audio data
-     * It should tell me data and 'flip some switches'
-     */
-    const checkAudio = useCallback(() => {
-        // Cancel startup if audioContext is not set
-        // This stops the recursive call to checkAudio
-        if (!analyser.current || !dataArray.current) return;
-
-        analyser.current.getFloatTimeDomainData(dataArray.current);
-        const rms: number = Math.sqrt(dataArray.current.reduce((sum, val) => sum + val * val, 0) / dataArray.current.length);
-        const dbFS: number = 20 * Math.log10(rms);
-        setVolume(dbFS);
-
-        // Check if audio is playing before allowing user to start recording
-        if (!playbackActiveRef.current) {
-            if (dbFS < silenceThreshold) {
-                // Set silence start time if not already set
-                //Might move following lines to useEffect as debounce
-                if (!silenceStartTime.current) {
-                    silenceStartTime.current = Date.now();
-                    longSilenceTimer.current = setTimeout(() => setSendTranscript(true), longSilenceDuration);
-                } else {
-                    const silenceDuration = Date.now() - silenceStartTime.current;
-
-                    if (silenceDuration > shortSilenceDuration && isRecordingStatus.current) {
-                        stopRecording();
-                        isRecordingStatus.current = false;
-                    }
-                }
-            } else {
-                // Still talking, don't want to process transcript yet
-                if (silenceStartTime.current) {
-                    silenceStartTime.current = null;
-                    if (longSilenceTimer.current) {
-                        clearTimeout(longSilenceTimer.current);
-                    }
-                }
-                // Start recording if not already recording
-                if (!isRecordingStatus.current) {
-                    startRecording();
-                    isRecordingStatus.current = true;
-                }
-            }
-        }
-
-        // Recursive call to check audio
-        animationFrame.current = requestAnimationFrame(checkAudio);
-    }, [silenceThreshold, shortSilenceDuration, longSilenceDuration, startRecording]);
-
-
     const processTextStream = useCallback(async function processTextStream(response: Response, start: Date) {
         const reader = response.body?.getReader();
         const decoder = new TextDecoder();
@@ -245,7 +134,7 @@ function AdvancedAudioRecorder() {
             const message = sentences.join('').replace(processedText, '');
             if (message.length > 20) {
                 const audioBuffer = await getTextToVoice(processedText, message, selectedTTSVoice);
-                console.log('Adding to audioToPlay:', new Date() - start);
+                // console.log('Adding to audioToPlay:', new Date() - start);
 
                 if (audioBuffer) {
                     audioData.current.push({
@@ -350,6 +239,18 @@ function AdvancedAudioRecorder() {
         currentTranscription.current = ''
     }, [chatContext, processTextStream]);
 
+    useEffect(() => {
+        playbackActiveRef.current = playbackActive;
+    }, [playbackActive]);
+
+    useEffect(() => {
+        if (isRecordingStatus.current) {
+            startRecording();
+        } else {
+            stopRecording();
+        }
+    }, [volume, startRecording, isRecordingStatus]);
+
     /**
      * Plays the audio data
      * 
@@ -359,7 +260,6 @@ function AdvancedAudioRecorder() {
      * - There is an audio context
      */
     useEffect(() => {
-        console.log('Audio to play:', audioData.current.length, 'Playback active:', playbackActive);
         if (audioContext.current && audioData.current.length > 0 && playbackActive === false) {
             setPlaybackActive(true);
             const source = audioContext.current.createBufferSource();
@@ -386,12 +286,12 @@ function AdvancedAudioRecorder() {
                 const devices = await navigator.mediaDevices.enumerateDevices();
                 const audioInputs = devices.filter(device => device.kind === 'audioinput');
                 if (audioInputs.length > 0) {
-                    setSelectedInput(audioInputs.filter(i => i.label.includes('Default'))[0].deviceId);
-                    setAudioInputs(audioInputs);
+                    setSelectedAudioInput(audioInputs.filter(i => i.label.includes('Default'))[0].deviceId);
+                    setAvailableAudioDevices(audioInputs);
                 }
             } catch (error) {
                 console.error('Error loading audio devices:', error);
-                setAudioInputs([]);
+                setAvailableAudioDevices([]);
             }
         }
         loadAudioDevices();
@@ -417,27 +317,7 @@ function AdvancedAudioRecorder() {
         }
     }, []);
 
-    // useEffect(() => {
-    //     // let handle: NodeJS.Timeout;
-    //     if (volume < silenceThreshold && longSilenceTimer.current === null && currentTranscription.current.length > 0) {
-    //         silenceStartTime.current = Date.now();
-    //         longSilenceTimer.current = setTimeout(() => setSendTranscript(true), longSilenceDuration);
 
-    //         const silenceDuration = Date.now() - silenceStartTime.current;
-    //         if (silenceDuration > shortSilenceDuration && isRecordingStatus.current) {
-    //             stopRecording();
-    //             isRecordingStatus.current = false;
-    //         }
-    //         console.log('Silence detected', longSilenceTimer.current);
-    //     }
-
-    //     return () => {
-    //         if (longSilenceTimer.current) {
-    //             clearTimeout(longSilenceTimer.current);
-    //             longSilenceTimer.current = null;
-    //         }
-    //     }
-    // }, [volume, silenceThreshold, longSilenceDuration, shortSilenceDuration]);
 
     /**
      * Handles sending the user transcript to the STT API for processing
@@ -457,10 +337,11 @@ function AdvancedAudioRecorder() {
             && currentTranscription.current.length > 0
             && speechToTextDataQueue.current.length === 0
         ) {
+            console.log('playbackActive', playbackActiveRef.current, 'Send transcript:', sendTranscript, 'Fetching data:', fetchingTranscriptData, 'Current transcription:', currentTranscription.current.length, 'Audio data queue:', speechToTextDataQueue.current.length);
             setSendTranscript(false);
             handleLongSilence(currentTranscription.current)
         }
-    }, [sendTranscript, fetchingTranscriptData, handleLongSilence]);
+    }, [sendTranscript, fetchingTranscriptData, handleLongSilence, setSendTranscript]);
 
     /**
      * Processes the STT data queue
@@ -483,11 +364,11 @@ function AdvancedAudioRecorder() {
                 <div className="mb-4">
                     <label className="block mb-2">Select Audio Input:</label>
                     <select
-                        value={selectedInput}
-                        onChange={(e) => setSelectedInput(e.target.value)}
+                        value={selectedAudioInput}
+                        onChange={(e) => setSelectedAudioInput(e.target.value)}
                         className="w-full p-2 border rounded"
                     >
-                        {audioInputs.map((device) => (
+                        {availableAudioDevices.map((device) => (
                             <option key={device.deviceId} value={device.deviceId}>
                                 {device.label || `Microphone ${device.deviceId.slice(0, 5)}`}
                             </option>
@@ -509,10 +390,10 @@ function AdvancedAudioRecorder() {
                     </select>
                 </div>
                 <button
-                    className={`px-4 py-2 rounded ${isListening ? 'bg-red-500' : 'bg-green-500'} text-white mb-4`}
-                    onClick={isListening ? stopListening : startListening}
+                    className={`px-4 py-2 rounded ${isListeningStatus ? 'bg-red-500' : 'bg-green-500'} text-white mb-4`}
+                    onClick={isListeningStatus ? stopListening : () => startListening(selectedAudioInput)}
                 >
-                    {isListening ? 'Stop Listening' : 'Start Listening'}
+                    {isListeningStatus ? 'Stop Listening' : 'Start Listening'}
                 </button>
                 <div className="mb-4">
                     <label className="block mb-2">

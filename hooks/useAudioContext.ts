@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback } from "react";
+import { set } from "zod";
 
 interface AudioContextRef {
     current: AudioContext | null;
@@ -21,17 +22,14 @@ interface NumberRef {
 }
 
 export default function useAudioContext() {
-    const [isListening, setIsListening] = useState<boolean>(false);
+    const [isListeningStatus, setIsListeningStatus] = useState<boolean>(false);
     const [volume, setVolume] = useState<number>(-Infinity);
-    const [isSilent, setIsSilent] = useState<boolean>(true);
     const [shortSilenceDuration, setShortSilenceDuration] = useState<number>(500);
     const [longSilenceDuration, setLongSilenceDuration] = useState<number>(1000);
     const [silenceThreshold, setSilenceThreshold] = useState<number>(-38);
     const [sendTranscript, setSendTranscript] = useState<boolean>(false);
-    const [isRecordingStatus, setIsRecording] = useState<boolean>(false);
 
-
-
+    const audioData = useRef<{ audioBuffer: AudioBuffer, text: string }[]>([]);
     const audioContext: AudioContextRef = useRef(null);
     const stream = useRef<MediaStream | null>(null);
     const analyser: AnalyserNodeRef = useRef(null);
@@ -39,14 +37,20 @@ export default function useAudioContext() {
     const silenceStartTime: NumberRef = useRef(null);
     const longSilenceTimer = useRef<NodeJS.Timeout | null>(null);
     const animationFrame: NumberRef = useRef(null);
-    const isRecordingRef = useRef(false);
+    const isRecordingStatus = useRef(false);
+    const mediaRecorder: MediaRecorderRef = useRef(null);
+    const playbackActiveRef = useRef<boolean>(false);
 
 
-    async function startListening(selectedInput: string): Promise<boolean> {
+
+    /**
+ * Creates audio context and other nodes to start listening
+ */
+    async function startListening(selectedAudioInput: string): Promise<void> {
         try {
             console.log('Starting to listen...');
             stream.current = await navigator.mediaDevices.getUserMedia({
-                audio: { deviceId: selectedInput ? { exact: selectedInput } : undefined }
+                audio: { deviceId: selectedAudioInput ? { exact: selectedAudioInput } : undefined }
             });
             audioContext.current = new AudioContext();
             analyser.current = audioContext.current.createAnalyser();
@@ -56,13 +60,11 @@ export default function useAudioContext() {
             analyser.current.fftSize = 2048;
             dataArray.current = new Float32Array(analyser.current.fftSize);
 
-            setIsListening(true);
+            setIsListeningStatus(true);
             checkAudio();
             console.log('Listening started');
-            return true
         } catch (error) {
             console.error('Error accessing microphone:', error);
-            return false
         }
     }
 
@@ -72,58 +74,75 @@ export default function useAudioContext() {
             audioContext.current.close();
             audioContext.current = null;
         }
-
+        if (animationFrame.current) {
+            cancelAnimationFrame(animationFrame.current);
+        }
+        if (mediaRecorder.current && mediaRecorder.current.state !== 'inactive') {
+            mediaRecorder.current.stop();
+        }
         if (stream.current) {
             stream.current.getTracks().forEach(track => track.stop());
             stream.current = null;
         }
-
-        setIsListening(false);
+        if (longSilenceTimer.current) {
+            clearTimeout(longSilenceTimer.current);
+        }
+        setIsListeningStatus(false);
+        isRecordingStatus.current = false;
+        setVolume(-Infinity);
+        audioData.current = [];
         console.log('Listening stopped');
     }
 
-    const checkAudio = useCallback(function checkAudio() {
+    /**
+     * Controller function to check the audio data
+     * It should tell me data and 'flip some switches'
+     */
+    const checkAudio = useCallback(() => {
+        // Cancel startup if audioContext is not set
+        // This stops the recursive call to checkAudio
         if (!analyser.current || !dataArray.current) return;
+        // console.log('Checking audio...', analyser.current, dataArray.current);
 
         analyser.current.getFloatTimeDomainData(dataArray.current);
         const rms: number = Math.sqrt(dataArray.current.reduce((sum, val) => sum + val * val, 0) / dataArray.current.length);
         const dbFS: number = 20 * Math.log10(rms);
         setVolume(dbFS);
 
-        if (dbFS < silenceThreshold) {
-            // Set silence start time if not already set
-            if (!silenceStartTime.current) {
-                silenceStartTime.current = Date.now();
-                longSilenceTimer.current = setTimeout(() => setSendTranscript(true), longSilenceDuration);
-            } else {
-                const silenceDuration = Date.now() - silenceStartTime.current;
+        // Check if audio is playing before allowing user to start recording
+        if (!playbackActiveRef.current) {
+            if (dbFS < silenceThreshold) {
+                // Set silence start time if not already set
+                //Might move following lines to useEffect as debounce
+                if (!silenceStartTime.current) {
+                    silenceStartTime.current = Date.now();
+                    longSilenceTimer.current = setTimeout(() => setSendTranscript(true), longSilenceDuration);
+                } else {
+                    const silenceDuration = Date.now() - silenceStartTime.current;
 
-                if (silenceDuration > shortSilenceDuration && isRecordingRef.current) {
-                    // stopRecording();
-                    // setIsRecording(false);
-                    return { recording: false }
+                    if (silenceDuration > shortSilenceDuration && isRecordingStatus.current) {
+                        // stopRecording();
+                        isRecordingStatus.current = false;
+                    }
                 }
-            }
-            setIsSilent(true);
-        } else {
-            // Still talking, don't want to process transcript yet
-            if (silenceStartTime.current) {
-                silenceStartTime.current = null;
-                if (longSilenceTimer.current) {
-                    clearTimeout(longSilenceTimer.current);
+            } else {
+                // Still talking, don't want to process transcript yet
+                if (silenceStartTime.current) {
+                    silenceStartTime.current = null;
+                    if (longSilenceTimer.current) {
+                        clearTimeout(longSilenceTimer.current);
+                    }
                 }
-            }
-            setIsSilent(false);
-            // Start recording if not already recording
-            if (!isRecordingRef.current) {
-                // startRecording();
-                // setIsRecording(true);
-                return { recording: true }
+                // Start recording if not already recording
+                if (!isRecordingStatus.current) {
+                    // startRecording();
+                    isRecordingStatus.current = true;
+                }
             }
         }
-
+        //     // Recursive call to check audio
         animationFrame.current = requestAnimationFrame(checkAudio);
-    }, [silenceThreshold, shortSilenceDuration, longSilenceDuration]);
+    }, [shortSilenceDuration, longSilenceDuration, silenceThreshold]);
 
     return {
         startListening,
@@ -131,10 +150,38 @@ export default function useAudioContext() {
         setShortSilenceDuration,
         setLongSilenceDuration,
         setSilenceThreshold,
-        isListening,
+        setSendTranscript,
         volume,
-        isSilent,
         sendTranscript,
-        isRecordingStatus
+        isRecordingStatus,
+        isListeningStatus,
+        silenceThreshold,
+        shortSilenceDuration,
+        longSilenceDuration,
+        stream,
+        audioContext
     };
 }
+
+
+// useEffect(() => {
+//     // let handle: NodeJS.Timeout;
+//     if (volume < silenceThreshold && longSilenceTimer.current === null && currentTranscription.current.length > 0) {
+//         silenceStartTime.current = Date.now();
+//         longSilenceTimer.current = setTimeout(() => setSendTranscript(true), longSilenceDuration);
+
+//         const silenceDuration = Date.now() - silenceStartTime.current;
+//         if (silenceDuration > shortSilenceDuration && isRecordingStatus.current) {
+//             stopRecording();
+//             isRecordingStatus.current = false;
+//         }
+//         console.log('Silence detected', longSilenceTimer.current);
+//     }
+
+//     return () => {
+//         if (longSilenceTimer.current) {
+//             clearTimeout(longSilenceTimer.current);
+//             longSilenceTimer.current = null;
+//         }
+//     }
+// }, [volume, silenceThreshold, longSilenceDuration, shortSilenceDuration]);
