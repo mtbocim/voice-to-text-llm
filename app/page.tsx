@@ -11,10 +11,6 @@ import { Accordion, AccordionItem } from '@nextui-org/react';
 import getVoiceTranscription from '@/actions/getVoiceTranscription';
 import useAudioContext from '@/hooks/useAudioContext';
 
-interface AudioContextRef {
-    current: AudioContext | null;
-}
-
 interface MediaRecorderRef {
     current: MediaRecorder | null;
 }
@@ -130,7 +126,7 @@ function AdvancedAudioRecorder() {
 
             const textChunk = decoder.decode(value, { stream: true });
             completeText += textChunk;
-            const sentences = completeText.match(/(.+?[,.:!?\r\n])\s?/gm) || [];
+            const sentences = completeText.match(/(.+?[.:!?\r\n])\s?/gm) || [];
             const message = sentences.join('').replace(processedText, '');
             if (message.length > 20) {
                 const audioBuffer = await getTextToVoice(processedText, message, selectedTTSVoice);

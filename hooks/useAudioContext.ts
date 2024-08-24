@@ -1,5 +1,4 @@
-import { useState, useRef, useCallback } from "react";
-import { set } from "zod";
+import { useState, useRef, useCallback, useEffect } from "react";
 
 interface AudioContextRef {
     current: AudioContext | null;
@@ -36,7 +35,6 @@ export default function useAudioContext() {
     const dataArray: Float32ArrayRef = useRef(null);
     const silenceStartTime: NumberRef = useRef(null);
     const longSilenceTimer = useRef<NodeJS.Timeout | null>(null);
-    const animationFrame: NumberRef = useRef(null);
     const isRecordingStatus = useRef(false);
     const mediaRecorder: MediaRecorderRef = useRef(null);
     const playbackActiveRef = useRef<boolean>(false);
@@ -74,9 +72,6 @@ export default function useAudioContext() {
             audioContext.current.close();
             audioContext.current = null;
         }
-        if (animationFrame.current) {
-            cancelAnimationFrame(animationFrame.current);
-        }
         if (mediaRecorder.current && mediaRecorder.current.state !== 'inactive') {
             mediaRecorder.current.stop();
         }
@@ -102,7 +97,6 @@ export default function useAudioContext() {
         // Cancel startup if audioContext is not set
         // This stops the recursive call to checkAudio
         if (!analyser.current || !dataArray.current) return;
-        // console.log('Checking audio...', analyser.current, dataArray.current);
 
         analyser.current.getFloatTimeDomainData(dataArray.current);
         const rms: number = Math.sqrt(dataArray.current.reduce((sum, val) => sum + val * val, 0) / dataArray.current.length);
@@ -121,7 +115,6 @@ export default function useAudioContext() {
                     const silenceDuration = Date.now() - silenceStartTime.current;
 
                     if (silenceDuration > shortSilenceDuration && isRecordingStatus.current) {
-                        // stopRecording();
                         isRecordingStatus.current = false;
                     }
                 }
@@ -135,14 +128,26 @@ export default function useAudioContext() {
                 }
                 // Start recording if not already recording
                 if (!isRecordingStatus.current) {
-                    // startRecording();
                     isRecordingStatus.current = true;
                 }
             }
         }
-        //     // Recursive call to check audio
-        animationFrame.current = requestAnimationFrame(checkAudio);
+
     }, [shortSilenceDuration, longSilenceDuration, silenceThreshold]);
+
+
+    //Drives the checkAudio function
+    useEffect(() => {
+        let intervalId: NodeJS.Timeout | null = null;
+
+        if (isListeningStatus) {
+            intervalId = setInterval(checkAudio, 100);
+        }
+
+        return () => {
+            if (intervalId) clearInterval(intervalId);
+        };
+    }, [isListeningStatus, checkAudio]);
 
     return {
         startListening,
