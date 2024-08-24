@@ -18,7 +18,7 @@ export async function POST(req: Request) {
             const { textStream } = await streamText({
                 model: anthropic('claude-3-5-sonnet-20240620'),
                 system: generalPersona,
-                messages:messages.filter(m=>m.role !== 'feedback'),
+                messages:messages.filter(m=>m.role !== 'feedback').slice(-5),
                 maxTokens: 500,
             });
 

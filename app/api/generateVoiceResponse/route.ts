@@ -11,7 +11,7 @@ const OPENAI_KEY = process.env.OPENAI_KEY;
 const openai = new OpenAI({ apiKey: OPENAI_KEY });
 
 // Setup OpenAI as cheap alternative
-const TTS_SOURCE = false ? 'elevenlabs' : 'openai'; // 'openai' or 'elevenlabs'
+const TTS_SOURCE = true ? 'elevenlabs' : 'openai'; // 'openai' or 'elevenlabs'
 
 export async function POST(req: Request): Promise<NextResponse<ReadableStream>> {
 
