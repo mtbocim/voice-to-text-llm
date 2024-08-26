@@ -110,7 +110,7 @@ export default function useAudioContext() {
                 //Might move following lines to useEffect as debounce
                 if (!silenceStartTime.current) {
                     silenceStartTime.current = Date.now();
-                    longSilenceTimer.current = setTimeout(() => setSendTranscript(true), longSilenceDuration);
+                    // longSilenceTimer.current = setTimeout(() => setSendTranscript(true), longSilenceDuration);
                 } else {
                     const silenceDuration = Date.now() - silenceStartTime.current;
 
@@ -122,9 +122,9 @@ export default function useAudioContext() {
                 // Still talking, don't want to process transcript yet
                 if (silenceStartTime.current) {
                     silenceStartTime.current = null;
-                    if (longSilenceTimer.current) {
-                        clearTimeout(longSilenceTimer.current);
-                    }
+                    // if (longSilenceTimer.current) {
+                    //     clearTimeout(longSilenceTimer.current);
+                    // }
                 }
                 // Start recording if not already recording
                 if (!isRecordingStatus.current) {
@@ -141,7 +141,7 @@ export default function useAudioContext() {
         let intervalId: NodeJS.Timeout | null = null;
 
         if (isListeningStatus) {
-            intervalId = setInterval(checkAudio, 100);
+            intervalId = setInterval(checkAudio, 50);
         }
 
         return () => {
@@ -152,19 +152,21 @@ export default function useAudioContext() {
     return {
         startListening,
         stopListening,
-        setShortSilenceDuration,
-        setLongSilenceDuration,
-        setSilenceThreshold,
         setSendTranscript,
         volume,
         sendTranscript,
         isRecordingStatus,
         isListeningStatus,
-        silenceThreshold,
-        shortSilenceDuration,
-        longSilenceDuration,
         stream,
-        audioContext
+        audioContext,
+        playbackActiveRef,
+        // Will eventually be more or less hardcoded, and not needed to be passed around
+        setShortSilenceDuration,
+        shortSilenceDuration,
+        setLongSilenceDuration,
+        longSilenceDuration,
+        setSilenceThreshold,
+        silenceThreshold,
     };
 }
 

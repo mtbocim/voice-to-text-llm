@@ -3,6 +3,52 @@
 import OpenAI from "openai";
 const openai = new OpenAI({ apiKey: process.env.OPENAI_KEY });
 
+import { GoogleGenerativeAI } from '@google/generative-ai';
+const gemini = new GoogleGenerativeAI(process.env.GEMINI_KEY||'');
+
+// import { createAnthropic } from "@ai-sdk/anthropic";
+// const anthropic = createAnthropic({
+//     apiKey: process.env.ANTHROPIC_API_KEY,
+// });
+
+function quickCheck(text) {
+    // Trim the text to remove leading/trailing whitespace
+    text = text.trim();
+
+    // If the text is empty, it's not mid-sentence
+    if (text === '') {
+        return false;
+    }
+
+    // Regex patterns
+    const sentenceEndPattern = /[.!?]$/;
+    const ellipsisPattern = /\.{3,}$/;
+    const incompletePhrasesPattern = /^(so|and|but|or|because|while|if|unless|although|however|therefore|thus|hence|consequently|nevertheless|moreover|furthermore|additionally|in addition|as a result|accordingly|subsequently|meanwhile|otherwise|alternatively|conversely|similarly|likewise|in contrast|on the other hand)$/i;
+    const fillerWordsPattern = /^(um|uh|er|ah|like|you know)$/i;
+
+    // Check if the text ends with sentence-ending punctuation
+    if (sentenceEndPattern.test(text)) {
+        return false;
+    }
+
+    // Check if the text ends with an ellipsis (interpreted as a pause, likely mid-sentence)
+    if (ellipsisPattern.test(text)) {
+        return true;
+    }
+
+    // Split the text into words
+    const words = text.split(/\s+/);
+    const lastWord = words[words.length - 1].toLowerCase();
+
+    // Check if the last word is an incomplete phrase starter or a filler word
+    if (incompletePhrasesPattern.test(lastWord) || fillerWordsPattern.test(lastWord)) {
+        return true;
+    }
+
+    // If none of the above conditions are met, we need LLM check
+    return true;
+}
+
 export default async function getVoiceTranscription(formData: FormData) {
     const audioFile = formData.get('file') as File
     const previousTranscript = formData.get('previousTranscript') as string
@@ -15,6 +61,45 @@ export default async function getVoiceTranscription(formData: FormData) {
         language: "en",
         prompt: previousTranscript,
     });
-    return transcription.text
+    const start = new Date();
+    const quickResult = quickCheck(transcription.text);
+    console.log("Get mid sentence determination start", start, "previous", previousTranscript, "new", transcription.text)
+    if (quickResult) {
+        try {
+            const model = gemini.getGenerativeModel({
+                model: "gemini-1.5-flash-latest",
+                systemInstruction: `
+             Determine if the following transcribed speech is truncates at an appropriate place for another person to interject.
+             Consider context, grammar, and natural speech patterns.
+             Interpret ellipses (...) as natural pauses in speech. Treat text separated by ellipses as part of the same continuous thought unless there's a clear topic change.
+             Respond with only "True" if it's mid-sentence, or "False" if it's not.
+  
+             Response in JSON:
+             {
+                 "isMidSentence": boolean
+             }
+            `,
+            })
 
+            const chat = model.startChat({
+                history: [],
+                generationConfig: {
+                    maxOutputTokens: 200,
+                    responseMimeType: 'application/json',
+                }
+            })
+
+            const msg = `The current transcript is: ${previousTranscript + transcription.text}`
+            const result = await chat.sendMessage(msg);
+            const data = JSON.parse(result.response.text())
+
+            console.log("Get mid sentence determination end", new Date() - start)
+
+            return { newText: transcription.text, isMidSentence: data.isMidSentence }
+        } catch (error) {
+            console.error('Error processing audio data:', error);
+        }
+    } else {
+        return { newText: transcription.text, isMidSentence: quickResult }
+    }
 }

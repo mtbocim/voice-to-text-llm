@@ -10,10 +10,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Accordion, AccordionItem } from '@nextui-org/react';
 import getVoiceTranscription from '@/actions/getVoiceTranscription';
 import useAudioContext from '@/hooks/useAudioContext';
-
-interface MediaRecorderRef {
-    current: MediaRecorder | null;
-}
+import useRecordAudio from '@/hooks/useRecordAudio';
 
 const COLOR_MAP = {
     user: 'bg-blue-200',
@@ -40,9 +37,10 @@ function AdvancedAudioRecorder() {
         longSilenceDuration,
         stream,
         audioContext,
+        playbackActiveRef,
     } = useAudioContext();
-    //Will be hardcoded eventually
 
+    const { startRecording, stopRecording, speechToTextDataQueue } = useRecordAudio();
 
     // Updating UI (which includes audio playback), keep as state
     const [chatContext, setChatContext] = useState<{ role: string; content: string; }[]>([]);
@@ -56,14 +54,12 @@ function AdvancedAudioRecorder() {
 
     // Keep as ref
     const audioData = useRef<{ audioBuffer: AudioBuffer, text: string }[]>([]);
-    const speechToTextDataQueue = useRef<Blob[]>([]);
-    const mediaRecorder: MediaRecorderRef = useRef(null);
-    const audioChunk = useRef<Blob | null>(null);
     const currentTranscription = useRef<string>('');
     const spokenText = useRef<string>('');
-    const playbackActiveRef = useRef<boolean>(false);
+    // const playbackActiveRef = useRef<boolean>(false);
+    const isMidSentence = useRef<boolean>(false);
 
-    
+
 
 
     /**
@@ -76,40 +72,19 @@ function AdvancedAudioRecorder() {
             formData.append('file', audioChunk, 'audio.webm');
             formData.append('model', 'whisper-1');
             formData.append('previousTranscript', currentTranscription.current);
-            const results = await getVoiceTranscription(formData);
-            currentTranscription.current = currentTranscription.current + ' ' + results;
-            console.log('currentTranscription in processQueue:', results);
+            try {
+                const results = await getVoiceTranscription(formData);
+                currentTranscription.current = currentTranscription.current + ' ' + results.newText;
+                isMidSentence.current = results.isMidSentence;
+                setSendTranscript(true);
+                console.log('currentTranscription in processQueue:', results);
+            } catch (error) {
+                console.error('Error processing queue:', error);
+            }
+
+            // Prompt check for if the user sounds like they have completed a thought
         }
         setGettingTranscriptData(false);
-    }
-
-    const startRecording = useCallback(function startRecording(): void {
-        function handleDataAvailable(event: BlobEvent): void {
-            if (event.data.size > 0) {
-                audioChunk.current = event.data;
-            }
-        }
-
-        // When called creates a closure, can't see current state data
-        function handleRecordingStop(): void {
-            if (audioChunk.current) {
-                speechToTextDataQueue.current.push(audioChunk.current);
-            }
-            mediaRecorder.current = null;
-        }
-
-        if (stream.current && !mediaRecorder.current) {
-            mediaRecorder.current = new MediaRecorder(stream.current, { mimeType: 'audio/webm' });
-            mediaRecorder.current.ondataavailable = handleDataAvailable;
-            mediaRecorder.current.onstop = handleRecordingStop;
-            mediaRecorder.current.start();
-        }
-    }, [])
-
-    function stopRecording(): void {
-        if (mediaRecorder.current && mediaRecorder.current.state !== 'inactive') {
-            mediaRecorder.current.stop();
-        }
     }
 
     const processTextStream = useCallback(async function processTextStream(response: Response, start: Date) {
@@ -240,8 +215,8 @@ function AdvancedAudioRecorder() {
     }, [playbackActive]);
 
     useEffect(() => {
-        if (isRecordingStatus.current) {
-            startRecording();
+        if (isRecordingStatus.current && stream.current) {
+            startRecording(stream.current);
         } else {
             stopRecording();
         }
@@ -328,6 +303,7 @@ function AdvancedAudioRecorder() {
     useEffect(() => {
         if (
             !playbackActiveRef.current
+            && !isMidSentence.current
             && sendTranscript
             && !fetchingTranscriptData
             && currentTranscription.current.length > 0
