@@ -24,9 +24,7 @@ export default function useAudioContext() {
     const [isListeningStatus, setIsListeningStatus] = useState<boolean>(false);
     const [volume, setVolume] = useState<number>(-Infinity);
     const [shortSilenceDuration, setShortSilenceDuration] = useState<number>(500);
-    const [longSilenceDuration, setLongSilenceDuration] = useState<number>(1000);
     const [silenceThreshold, setSilenceThreshold] = useState<number>(-38);
-    const [sendTranscript, setSendTranscript] = useState<boolean>(false);
 
     const audioData = useRef<{ audioBuffer: AudioBuffer, text: string }[]>([]);
     const audioContext: AudioContextRef = useRef(null);
@@ -37,13 +35,13 @@ export default function useAudioContext() {
     const longSilenceTimer = useRef<NodeJS.Timeout | null>(null);
     const isRecordingStatus = useRef(false);
     const mediaRecorder: MediaRecorderRef = useRef(null);
-    const playbackActiveRef = useRef<boolean>(false);
+    const isPlaybackActive = useRef<boolean>(false);
 
 
 
     /**
- * Creates audio context and other nodes to start listening
- */
+    * Creates audio context and other nodes to start listening
+    */
     async function startListening(selectedAudioInput: string): Promise<void> {
         try {
             console.log('Starting to listen...');
@@ -104,13 +102,12 @@ export default function useAudioContext() {
         setVolume(dbFS);
 
         // Check if audio is playing before allowing user to start recording
-        if (!playbackActiveRef.current) {
+        if (!isPlaybackActive.current) {
             if (dbFS < silenceThreshold) {
                 // Set silence start time if not already set
                 //Might move following lines to useEffect as debounce
                 if (!silenceStartTime.current) {
                     silenceStartTime.current = Date.now();
-                    // longSilenceTimer.current = setTimeout(() => setSendTranscript(true), longSilenceDuration);
                 } else {
                     const silenceDuration = Date.now() - silenceStartTime.current;
 
@@ -122,9 +119,7 @@ export default function useAudioContext() {
                 // Still talking, don't want to process transcript yet
                 if (silenceStartTime.current) {
                     silenceStartTime.current = null;
-                    // if (longSilenceTimer.current) {
-                    //     clearTimeout(longSilenceTimer.current);
-                    // }
+
                 }
                 // Start recording if not already recording
                 if (!isRecordingStatus.current) {
@@ -133,7 +128,7 @@ export default function useAudioContext() {
             }
         }
 
-    }, [shortSilenceDuration, longSilenceDuration, silenceThreshold]);
+    }, [shortSilenceDuration, silenceThreshold]);
 
 
     //Drives the checkAudio function
@@ -152,19 +147,15 @@ export default function useAudioContext() {
     return {
         startListening,
         stopListening,
-        setSendTranscript,
         volume,
-        sendTranscript,
         isRecordingStatus,
         isListeningStatus,
         stream,
         audioContext,
-        playbackActiveRef,
+        isPlaybackActive,
         // Will eventually be more or less hardcoded, and not needed to be passed around
         setShortSilenceDuration,
         shortSilenceDuration,
-        setLongSilenceDuration,
-        longSilenceDuration,
         setSilenceThreshold,
         silenceThreshold,
     };

@@ -16,7 +16,7 @@ const TTS_SOURCE = true ? 'elevenlabs' : 'openai'; // 'openai' or 'elevenlabs'
 export async function POST(req: Request): Promise<NextResponse<ReadableStream>> {
 
     const { previousText, voice, currentSentence } = await req.json();
-    console.log('previousText', previousText, '\n\nvoice', voice, '\n\ncurrentSentence', currentSentence);
+    // console.log('previousText', previousText, '\n\nvoice', voice, '\n\ncurrentSentence', currentSentence);
     // ElevenLabs response
 
     if (TTS_SOURCE !== 'openai') {

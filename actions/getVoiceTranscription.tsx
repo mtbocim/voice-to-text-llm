@@ -6,12 +6,9 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_KEY });
 import { GoogleGenerativeAI } from '@google/generative-ai';
 const gemini = new GoogleGenerativeAI(process.env.GEMINI_KEY||'');
 
-// import { createAnthropic } from "@ai-sdk/anthropic";
-// const anthropic = createAnthropic({
-//     apiKey: process.env.ANTHROPIC_API_KEY,
-// });
 
-function quickCheck(text) {
+
+function quickCheck(text: string) {
     // Trim the text to remove leading/trailing whitespace
     text = text.trim();
 
@@ -26,15 +23,17 @@ function quickCheck(text) {
     const incompletePhrasesPattern = /^(so|and|but|or|because|while|if|unless|although|however|therefore|thus|hence|consequently|nevertheless|moreover|furthermore|additionally|in addition|as a result|accordingly|subsequently|meanwhile|otherwise|alternatively|conversely|similarly|likewise|in contrast|on the other hand)$/i;
     const fillerWordsPattern = /^(um|uh|er|ah|like|you know)$/i;
 
+    // Check if the text ends with an ellipsis (speech-to-text interpreted as a pause, likely mid-sentence)
+    // Needs to be before sentence-ending punctuation check
+    if (ellipsisPattern.test(text)) {
+        return true;
+    }
+
     // Check if the text ends with sentence-ending punctuation
     if (sentenceEndPattern.test(text)) {
         return false;
     }
 
-    // Check if the text ends with an ellipsis (interpreted as a pause, likely mid-sentence)
-    if (ellipsisPattern.test(text)) {
-        return true;
-    }
 
     // Split the text into words
     const words = text.split(/\s+/);
@@ -45,8 +44,8 @@ function quickCheck(text) {
         return true;
     }
 
-    // If none of the above conditions are met, we need LLM check
-    return true;
+    // Reached this point, not sure if mid-sentence
+    return undefined;
 }
 
 export default async function getVoiceTranscription(formData: FormData) {
@@ -63,8 +62,8 @@ export default async function getVoiceTranscription(formData: FormData) {
     });
     const start = new Date();
     const quickResult = quickCheck(transcription.text);
-    console.log("Get mid sentence determination start", start, "previous", previousTranscript, "new", transcription.text)
-    if (quickResult) {
+    console.log("Get mid sentence determination start time", start, "\nprevious text", previousTranscript, "\nnew text", transcription.text)
+    if (quickResult === undefined) {
         try {
             const model = gemini.getGenerativeModel({
                 model: "gemini-1.5-flash-latest",
