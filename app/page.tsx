@@ -46,12 +46,13 @@ function AdvancedAudioRecorder() {
     const [selectedTTSVoice, setVoice] = useState<string>('');
     const [fetchingVoiceTranscription, setFetchingVoiceTranscription] = useState<boolean>(false);
     const [processTranscription, setProcessTranscription] = useState<boolean>(false);
+    const [feedback, setFeedback] = useState<string>('');
 
     // Keep as ref
     const audioData = useRef<{ audioBuffer: AudioBuffer, text: string }[]>([]);
     const currentTranscription = useRef<string>('');
     const spokenText = useRef<string>('');
-    
+
     // Work in progress, trying to improve response flow
     const isInMiddleOfSentence = useRef<boolean>(false);
 
@@ -195,7 +196,13 @@ function AdvancedAudioRecorder() {
             },
             body: JSON.stringify({ messages: [...chatContext, currentMessage] })
         });
-
+        const feedbackResponse = fetch('/api/generateFeedbackResponse', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ messages: [...chatContext, currentMessage] })
+        });
         let processedText = await processTextStream(response);
         if (processedText.trim() === '') {
             // Placeholder until I have a better idea of why an empty string would be generated as a response
@@ -203,6 +210,10 @@ function AdvancedAudioRecorder() {
         }
         setChatContext([...chatContext, currentMessage, { role: 'assistant', content: processedText }]);
         currentTranscription.current = ''
+        const feedback = await feedbackResponse;
+        const feedbackData = await feedback.json();
+        // console.log('Feedback:', feedbackData.text);
+        setFeedback(feedbackData.text);
     }, [chatContext, processTextStream]);
 
 
@@ -329,7 +340,7 @@ function AdvancedAudioRecorder() {
             }
         }
         processTranscript();
-    }, [processTranscription, fetchingVoiceTranscription, handleLongSilence, setProcessTranscription, speechToTextDataQueue, isPlaybackActive ]);
+    }, [processTranscription, fetchingVoiceTranscription, handleLongSilence, setProcessTranscription, speechToTextDataQueue, isPlaybackActive]);
 
     /**
      * Processes the STT data queue
@@ -382,6 +393,15 @@ function AdvancedAudioRecorder() {
                     onClick={isListeningStatus ? stopListening : () => startListening(selectedAudioInput)}
                 >
                     {isListeningStatus ? 'Stop Listening' : 'Start Listening'}
+                </button>
+                <button
+                    className={`px-4 py-2 rounded bg-blue-500 text-white mb-4 ml-4`}
+                    onClick={() => {
+                        setChatContext([])
+                        setFeedback('')
+                    }}
+                >
+                    Reset
                 </button>
                 <div className="mb-4">
                     <label className="block mb-2">
@@ -452,6 +472,11 @@ function AdvancedAudioRecorder() {
                             </AccordionItem>
                         </Accordion>
                     }</div>)}
+                <Accordion className='w-full'>
+                    <AccordionItem key="2" aria-label='Feedback' title='Feedback'>
+                        {feedback}
+                    </AccordionItem>
+                </Accordion>
             </div>
         </div>
     );

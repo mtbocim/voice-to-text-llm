@@ -21,7 +21,7 @@ The quality of "gifts" (new information, actions, or directions) the players pro
 Approach the feedback with honesty and a genuine desire to help the user improve their improv skills.
 `,
         prompt: `Here are the players' lines so far: ${promptContent}`,
-        maxTokens: 200,
+        maxTokens: 300,
     });
 
     return Response.json({ text })

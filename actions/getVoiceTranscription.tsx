@@ -68,9 +68,8 @@ export default async function getVoiceTranscription(formData: FormData) {
             const model = gemini.getGenerativeModel({
                 model: "gemini-1.5-flash-latest",
                 systemInstruction: `
-             Determine if the following transcribed speech is truncates at an appropriate place for another person to interject.
+             Determine if the following transcribed speech is not truncated at an appropriate place for another person to interject.
              Consider context, grammar, and natural speech patterns.
-             Interpret ellipses (...) as natural pauses in speech. Treat text separated by ellipses as part of the same continuous thought unless there's a clear topic change.
              Respond with only "True" if it's mid-sentence, or "False" if it's not.
   
              Response in JSON:
