@@ -29,11 +29,11 @@ function AdvancedAudioRecorder() {
         volume,
         isRecordingStatus,
         isListeningStatus,
+        isPlaybackActive,
         silenceThreshold,
         shortSilenceDuration,
-        stream,
+        inputStream,
         audioContext,
-        isPlaybackActive,
     } = useAudioContext();
 
     const { startRecording, stopRecording, speechToTextDataQueue } = useRecordAudio();
@@ -55,6 +55,7 @@ function AdvancedAudioRecorder() {
 
     // Work in progress, trying to improve response flow
     const isInMiddleOfSentence = useRef<boolean>(false);
+    const blockRecording = useRef<boolean>(false);
 
 
     /**
@@ -113,7 +114,7 @@ function AdvancedAudioRecorder() {
                     processedText += message;
                 }
             }
-            console.log('done:', done, 'isRecordingStatus:', isRecordingStatus.current);
+            console.log('done:', done, 'isRecordingStatus:', isRecordingStatus);
             if (done) {
                 // TODO: Need to decide if I want truncated text or not, maybe easier to not?
                 // Make sure we got the last bit of text in case it doesn't end with a punctuation mark
@@ -224,8 +225,8 @@ function AdvancedAudioRecorder() {
         // - I'm not processing the transcript
         // - Nothing is currently playing
 
-        if (isRecordingStatus.current && stream.current && !isPlaybackActive.current) {
-            startRecording(stream.current);
+        if (isRecordingStatus.current && inputStream.current && !isPlaybackActive.current && !blockRecording.current) {
+            startRecording(inputStream.current);
         } else {
             stopRecording();
         }
@@ -323,6 +324,8 @@ function AdvancedAudioRecorder() {
      * - I'm not already processing data
      * - There is no data in the queue (text to voice)
      * - There isn't any TTS audio to play
+     * 
+     * I'm missing something, I can start talking while these condition are true and cause multiple requests
      */
     useEffect(() => {
         async function processTranscript() {
@@ -335,8 +338,10 @@ function AdvancedAudioRecorder() {
                 && speechToTextDataQueue.current.length === 0
             ) {
                 console.log('playbackActive', isPlaybackActive.current, 'Send transcript:', processTranscription, 'Fetching data:', fetchingVoiceTranscription, 'Current transcription:', currentTranscription.current.length, 'Audio data queue:', speechToTextDataQueue.current.length);
+                blockRecording.current = true;
                 await handleLongSilence(currentTranscription.current)
                 setProcessTranscription(false);
+                blockRecording.current = false;
             }
         }
         processTranscript();
@@ -357,128 +362,154 @@ function AdvancedAudioRecorder() {
     }, [speechToTextDataQueue.current.length, fetchingVoiceTranscription]);
 
     return (
-        <div className="p-4 w-full mx-auto flex flex-row">
-            <div className='w-1/2 px-40 mt-10'>
-                <h1 className="text-2xl font-bold mb-4">Audio Recorder Settings</h1>
-                <div className="mb-4">
-                    <label className="block mb-2">Select Audio Input:</label>
-                    <select
-                        value={selectedAudioInput}
-                        onChange={(e) => setSelectedAudioInput(e.target.value)}
-                        className="w-full p-2 border rounded"
-                    >
-                        {availableAudioDevices.map((device) => (
-                            <option key={device.deviceId} value={device.deviceId}>
-                                {device.label || `Microphone ${device.deviceId.slice(0, 5)}`}
-                            </option>
-                        ))}
-                    </select>
-                </div>
-                <div className="mb-4">
-                    <label className="block mb-2">Select Voice:</label>
-                    <select
-                        value={selectedTTSVoice}
-                        onChange={(e) => setVoice(e.target.value)}
-                        className="w-full p-2 border rounded"
-                    >
-                        {availableTTSVoices.map((voice) => (
-                            <option key={voice} value={voice}>
-                                {voice}
-                            </option>
-                        ))}
-                    </select>
-                </div>
-                <button
-                    className={`px-4 py-2 rounded ${isListeningStatus ? 'bg-red-500' : 'bg-green-500'} text-white mb-4`}
-                    onClick={isListeningStatus ? stopListening : () => startListening(selectedAudioInput)}
-                >
-                    {isListeningStatus ? 'Stop Listening' : 'Start Listening'}
-                </button>
-                <button
-                    className={`px-4 py-2 rounded bg-blue-500 text-white mb-4 ml-4`}
-                    onClick={() => {
-                        setChatContext([])
-                        setFeedback('')
-                    }}
-                >
-                    Reset
-                </button>
-                <div className="mb-4">
-                    <label className="block mb-2">
-                        Current Volume: {volume === -Infinity ? '-∞' : volume.toFixed(2)} dB
-                    </label>
-                    <div className="w-full bg-gray-200 rounded-full h-2.5">
-                        <div
-                            className="bg-blue-600 h-2.5 rounded-full"
-                            style={{ width: `${Math.max(0, (volume + 100) / 100 * 100)}%` }}
-                        ></div>
-                    </div>
-                </div>
-                <div className="mb-4">
-                    <label className="block mb-2">
-                        Silence Threshold: {silenceThreshold} dB
-                    </label>
-                    <input
-                        type="range"
-                        min="-100"
-                        max="0"
-                        value={silenceThreshold}
-                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSilenceThreshold(Number(e.target.value))}
-                        className="w-full"
-                    />
-                </div>
-                <div className="mb-4">
-                    <label className="block mb-2">
-                        Short Silence Duration: {shortSilenceDuration} ms
-                    </label>
-                    <input
-                        type="range"
-                        min="100"
-                        max="2000"
-                        step="100"
-                        value={shortSilenceDuration}
-                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setShortSilenceDuration(Number(e.target.value))}
-                        className="w-full"
-                    />
-                </div>
-                {/* <div className="mb-4">
-                    <label className="block mb-2">
-                        Long Silence Duration: {longSilenceDuration} ms
-                    </label>
-                    <input
-                        type="range"
-                        min="1000"
-                        max="5000"
-                        step="100"
-                        value={longSilenceDuration}
-                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setLongSilenceDuration(Number(e.target.value))}
-                        className="w-full"
-                    />
-                </div> */}
-                <div className={`p-4 rounded ${volume < silenceThreshold ? 'bg-red-200' : 'bg-green-200'}`}>
-                    {volume < silenceThreshold ? 'Silence Detected' : 'Audio Detected'}
-                </div>
-                <div className={`p-4 rounded mt-4 ${isRecordingStatus.current ? 'bg-yellow-200' : 'bg-gray-200'}`}>
-                    Recording Status: {isRecordingStatus.current ? 'Recording' : 'Not Recording'}
-                </div>
+      <div className="p-4 w-full mx-auto flex flex-row">
+        <div className="w-1/2 px-40 mt-10">
+          <h1 className="text-2xl font-bold mb-4">Audio Recorder Settings</h1>
+          <div className="mb-4">
+            <label className="block mb-2">Select Audio Input:</label>
+            <select
+              value={selectedAudioInput}
+              onChange={(e) => setSelectedAudioInput(e.target.value)}
+              className="w-full p-2 border rounded"
+            >
+              {availableAudioDevices.map((device) => (
+                <option key={device.deviceId} value={device.deviceId}>
+                  {device.label || `Microphone ${device.deviceId.slice(0, 5)}`}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="mb-4">
+            <label className="block mb-2">Select Voice:</label>
+            <select
+              value={selectedTTSVoice}
+              onChange={(e) => setVoice(e.target.value)}
+              className="w-full p-2 border rounded"
+            >
+              {availableTTSVoices.map((voice) => (
+                <option key={voice} value={voice}>
+                  {voice}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            className={`px-4 py-2 rounded ${
+              isListeningStatus ? "bg-red-500" : "bg-green-500"
+            } text-white mb-4`}
+            onClick={
+              isListeningStatus
+                ? stopListening
+                : () => startListening(selectedAudioInput)
+            }
+          >
+            {isListeningStatus ? "Stop Listening" : "Start Listening"}
+          </button>
+          <button
+            className={`px-4 py-2 rounded bg-blue-500 text-white mb-4 ml-4`}
+            onClick={() => {
+              setChatContext([]);
+              setFeedback("");
+            }}
+          >
+            Reset
+          </button>
+          <div className="mb-4">
+            <label className="block mb-2">
+              Current Volume: {volume === -Infinity ? "-∞" : volume.toFixed(2)}{" "}
+              dB
+            </label>
+            <div className="w-full bg-gray-200 rounded-full h-2.5">
+              <div
+                className="bg-blue-600 h-2.5 rounded-full"
+                style={{
+                  width: `${Math.max(0, ((volume + 100) / 100) * 100)}%`,
+                }}
+              ></div>
             </div>
-            <div className='w-1/2'>
-                {chatContext.map((message, index) => <div key={index}>
-                    {message.role !== 'feedback'
-                        ? <p className={`p-2 rounded ${COLOR_MAP[message.role]}`}>{message.content}</p>
-                        : <Accordion className='w-full'>
-                            <AccordionItem key="1" aria-label='Feedback' title='Feedback'>
-                                {message.content}
-                            </AccordionItem>
-                        </Accordion>
-                    }</div>)}
-                <Accordion className='w-full'>
-                    <AccordionItem key="2" aria-label='Feedback' title='Feedback'>
-                        {feedback}
-                    </AccordionItem>
-                </Accordion>
+          </div>
+          <div className="mb-4">
+            <label className="block mb-2">
+              Silence Threshold: {silenceThreshold} dB
+            </label>
+            <input
+              type="range"
+              min="-100"
+              max="0"
+              value={silenceThreshold}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                setSilenceThreshold(Number(e.target.value))
+              }
+              className="w-full"
+            />
+          </div>
+          <div className="mb-4">
+            <label className="block mb-2">
+              Short Silence Duration: {shortSilenceDuration} ms
+            </label>
+            <input
+              type="range"
+              min="100"
+              max="2000"
+              step="100"
+              value={shortSilenceDuration}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                setShortSilenceDuration(Number(e.target.value))
+              }
+              className="w-full"
+            />
+          </div>
+          <div>
+            <input
+              type="range"
+              min={-100}
+              max={0}
+              value={-50}
+            //   onChange={(e) => setSliderValue(parseInt(e.target.value))}
+            />
+            <div>
+              Min: {-75} | Max: {-30}
             </div>
+          </div>
+          <div
+            className={`p-4 rounded ${
+              volume < silenceThreshold ? "bg-red-200" : "bg-green-200"
+            }`}
+          >
+            {volume < silenceThreshold ? "Silence Detected" : "Audio Detected"}
+          </div>
+          <div
+            className={`p-4 rounded mt-4 ${
+              isRecordingStatus.current ? "bg-yellow-200" : "bg-gray-200"
+            }`}
+          >
+            Recording Status:{" "}
+            {isRecordingStatus.current ? "Recording" : "Not Recording"}
+          </div>
         </div>
+        <div className="w-1/2">
+          {chatContext.map((message, index) => (
+            <div key={index}>
+              {message.role !== "feedback" ? (
+                <p className={`p-2 rounded ${COLOR_MAP[message.role]}`}>
+                  {message.content}
+                </p>
+              ) : (
+                <Accordion className="w-full">
+                  <AccordionItem key="1" aria-label="Feedback" title="Feedback">
+                    {message.content}
+                  </AccordionItem>
+                </Accordion>
+              )}
+            </div>
+          ))}
+          <Accordion className="w-full">
+            <AccordionItem key="2" aria-label="Feedback" title="Feedback">
+              {feedback}
+            </AccordionItem>
+          </Accordion>
+        </div>
+      </div>
     );
 };
 

@@ -6,15 +6,14 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_KEY });
 import { GoogleGenerativeAI } from '@google/generative-ai';
 const gemini = new GoogleGenerativeAI(process.env.GEMINI_KEY||'');
 
-
-
+// Function to quickly check if the text is mid-sentence
 function quickCheck(text: string) {
     // Trim the text to remove leading/trailing whitespace
     text = text.trim();
 
-    // If the text is empty, it's not mid-sentence
+    // If the text is empty I don't want to move forward with anything, until there is text to do something with
     if (text === '') {
-        return false;
+        return true;
     }
 
     // Regex patterns
@@ -61,8 +60,8 @@ export default async function getVoiceTranscription(formData: FormData) {
         prompt: previousTranscript,
     });
     const start = new Date();
-    const quickResult = quickCheck(transcription.text);
     console.log("Get mid sentence determination start time", start, "\nprevious text", previousTranscript, "\nnew text", transcription.text)
+    const quickResult = quickCheck(transcription.text);
     if (quickResult === undefined) {
         try {
             const model = gemini.getGenerativeModel({
@@ -98,6 +97,14 @@ export default async function getVoiceTranscription(formData: FormData) {
             console.error('Error processing audio data:', error);
         }
     } else {
+        console.log(
+            "Get mid sentence determination start time",
+            start,
+            "\nprevious text",
+            previousTranscript,
+            "\nnew text",
+            transcription.text
+        );
         return { newText: transcription.text, isMidSentence: quickResult }
     }
 }

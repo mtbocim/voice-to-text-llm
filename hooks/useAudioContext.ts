@@ -1,42 +1,25 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 
-interface AudioContextRef {
-    current: AudioContext | null;
-}
-
-interface AnalyserNodeRef {
-    current: AnalyserNode | null;
-}
-
-interface MediaRecorderRef {
-    current: MediaRecorder | null;
-}
-
-interface Float32ArrayRef {
-    current: Float32Array | null;
-}
-
-interface NumberRef {
-    current: number | null;
-}
-
 export default function useAudioContext() {
     const [isListeningStatus, setIsListeningStatus] = useState<boolean>(false);
     const [volume, setVolume] = useState<number>(-Infinity);
     const [shortSilenceDuration, setShortSilenceDuration] = useState<number>(500);
     const [silenceThreshold, setSilenceThreshold] = useState<number>(-38);
 
-    const audioData = useRef<{ audioBuffer: AudioBuffer, text: string }[]>([]);
-    const audioContext: AudioContextRef = useRef(null);
-    const stream = useRef<MediaStream | null>(null);
-    const analyser: AnalyserNodeRef = useRef(null);
-    const dataArray: Float32ArrayRef = useRef(null);
-    const silenceStartTime: NumberRef = useRef(null);
+    const audioData = useRef<{ audioBuffer: AudioBuffer; text: string }[]>([]);
+    const audioContext = useRef<AudioContext | null>(null);
+    const inputStream = useRef<MediaStream | null>(null);
+    const analyser = useRef<AnalyserNode | null>(null);
+    const dataArray = useRef<Float32Array | null>(null);
+    const silenceStartTime = useRef<number | null>(null);
     const longSilenceTimer = useRef<NodeJS.Timeout | null>(null);
     const isRecordingStatus = useRef(false);
-    const mediaRecorder: MediaRecorderRef = useRef(null);
-    const isPlaybackActive = useRef<boolean>(false);
+    const mediaRecorder = useRef<MediaRecorder | null>(null);
+    const isPlaybackActive = useRef(false);
 
+    // Want to track min/max volume for dynamic thresholding
+    const minVolume = useRef<number[]>([-100]);
+    const maxVolume = useRef<number[]>([0]);
 
 
     /**
@@ -45,12 +28,12 @@ export default function useAudioContext() {
     async function startListening(selectedAudioInput: string): Promise<void> {
         try {
             console.log('Starting to listen...');
-            stream.current = await navigator.mediaDevices.getUserMedia({
+            inputStream.current = await navigator.mediaDevices.getUserMedia({
                 audio: { deviceId: selectedAudioInput ? { exact: selectedAudioInput } : undefined }
             });
             audioContext.current = new AudioContext();
             analyser.current = audioContext.current.createAnalyser();
-            const source: MediaStreamAudioSourceNode = audioContext.current.createMediaStreamSource(stream.current);
+            const source: MediaStreamAudioSourceNode = audioContext.current.createMediaStreamSource(inputStream.current);
             source.connect(analyser.current);
 
             analyser.current.fftSize = 2048;
@@ -73,9 +56,9 @@ export default function useAudioContext() {
         if (mediaRecorder.current && mediaRecorder.current.state !== 'inactive') {
             mediaRecorder.current.stop();
         }
-        if (stream.current) {
-            stream.current.getTracks().forEach(track => track.stop());
-            stream.current = null;
+        if (inputStream.current) {
+            inputStream.current.getTracks().forEach(track => track.stop());
+            inputStream.current = null;
         }
         if (longSilenceTimer.current) {
             clearTimeout(longSilenceTimer.current);
@@ -100,12 +83,11 @@ export default function useAudioContext() {
         const rms: number = Math.sqrt(dataArray.current.reduce((sum, val) => sum + val * val, 0) / dataArray.current.length);
         const dbFS: number = 20 * Math.log10(rms);
         setVolume(dbFS);
+        adjustMinMax(dbFS);
 
         // Check if audio is playing before allowing user to start recording
         if (!isPlaybackActive.current) {
             if (dbFS < silenceThreshold) {
-                // Set silence start time if not already set
-                //Might move following lines to useEffect as debounce
                 if (!silenceStartTime.current) {
                     silenceStartTime.current = Date.now();
                 } else {
@@ -130,6 +112,25 @@ export default function useAudioContext() {
 
     }, [shortSilenceDuration, silenceThreshold]);
 
+    function adjustMinMax(dbFS: number) {
+        
+        const maxAverage = maxVolume.current.reduce((acc, val) => acc + val, 0) / maxVolume.current.length;
+        const minAverage = minVolume.current.reduce((acc, val) => acc + val, 0) / minVolume.current.length;
+        const soundThreshold = minAverage + 5; // Adjust as needed
+        const silenceThreshold = maxAverage - 3; // Adjust as needed
+
+        // User is making sound
+        if (dbFS > soundThreshold) {
+            maxVolume.current = [...maxVolume.current.slice(-20), dbFS];
+        }
+
+        // User is not making sound 
+        if (dbFS !== -Infinity && dbFS < silenceThreshold) {
+            minVolume.current = [...minVolume.current.slice(-20), dbFS];
+        }
+
+        console.log('dbFS', dbFS, 'maxAverage:', maxAverage, 'minAverage:', minAverage);
+    }
 
     //Drives the checkAudio function
     useEffect(() => {
@@ -150,7 +151,7 @@ export default function useAudioContext() {
         volume,
         isRecordingStatus,
         isListeningStatus,
-        stream,
+        inputStream,
         audioContext,
         isPlaybackActive,
         // Will eventually be more or less hardcoded, and not needed to be passed around
@@ -160,26 +161,3 @@ export default function useAudioContext() {
         silenceThreshold,
     };
 }
-
-
-// useEffect(() => {
-//     // let handle: NodeJS.Timeout;
-//     if (volume < silenceThreshold && longSilenceTimer.current === null && currentTranscription.current.length > 0) {
-//         silenceStartTime.current = Date.now();
-//         longSilenceTimer.current = setTimeout(() => setSendTranscript(true), longSilenceDuration);
-
-//         const silenceDuration = Date.now() - silenceStartTime.current;
-//         if (silenceDuration > shortSilenceDuration && isRecordingStatus.current) {
-//             stopRecording();
-//             isRecordingStatus.current = false;
-//         }
-//         console.log('Silence detected', longSilenceTimer.current);
-//     }
-
-//     return () => {
-//         if (longSilenceTimer.current) {
-//             clearTimeout(longSilenceTimer.current);
-//             longSilenceTimer.current = null;
-//         }
-//     }
-// }, [volume, silenceThreshold, longSilenceDuration, shortSilenceDuration]);
