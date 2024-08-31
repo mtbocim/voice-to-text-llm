@@ -18,8 +18,9 @@ export default function useAudioContext() {
     const isPlaybackActive = useRef(false);
 
     // Want to track min/max volume for dynamic thresholding
-    const minVolume = useRef<number[]>([-100]);
-    const maxVolume = useRef<number[]>([0]);
+    const minVolumeSample = useRef<number[]>([-70]);
+    const maxVolumeSample = useRef<number[]>([0]);
+    const [volumeAverages, setVolumeAverages] = useState<{ min: number, max: number }>({ min: -100, max: 0 });
 
 
     /**
@@ -65,6 +66,7 @@ export default function useAudioContext() {
         }
         setIsListeningStatus(false);
         isRecordingStatus.current = false;
+        isPlaybackActive.current = false;
         setVolume(-Infinity);
         audioData.current = [];
         console.log('Listening stopped');
@@ -112,24 +114,37 @@ export default function useAudioContext() {
 
     }, [shortSilenceDuration, silenceThreshold]);
 
+    // Where I calculate the min/max volume for dynamic silence thresholding
     function adjustMinMax(dbFS: number) {
-        
-        const maxAverage = maxVolume.current.reduce((acc, val) => acc + val, 0) / maxVolume.current.length;
-        const minAverage = minVolume.current.reduce((acc, val) => acc + val, 0) / minVolume.current.length;
-        const soundThreshold = minAverage + 5; // Adjust as needed
-        const silenceThreshold = maxAverage - 3; // Adjust as needed
+        // Don't ever care about storing this case
+        if (dbFS === -Infinity) return;
 
-        // User is making sound
-        if (dbFS > soundThreshold) {
-            maxVolume.current = [...maxVolume.current.slice(-20), dbFS];
+        const maxAverage = maxVolumeSample.current.reduce((acc, val) => acc + val, 0) / maxVolumeSample.current.length;
+        const minAverage = minVolumeSample.current.reduce((acc, val) => acc + val, 0) / minVolumeSample.current.length;
+
+
+        // exponential moving average calculation
+        // https://en.wikipedia.org/wiki/Moving_average
+        // Hysteresis to prevent rapid switching between states
+        // https://en.wikipedia.org/wiki/Hysteresis
+        const maxHysteresis = 3; // dB 
+        const minHysteresis = 3; // dB
+        const alpha = 0.05; // EMA smoothing factor (adjust as needed)
+
+        if (Math.abs(dbFS - (maxAverage + maxHysteresis)) < Math.abs(dbFS - (minAverage - minHysteresis))) {
+            // Update maxVolumeSample
+            maxVolumeSample.current = maxVolumeSample.current.length > 0
+                ? maxVolumeSample.current.map((val) => alpha * dbFS + (1 - alpha) * val)
+                : [dbFS];
+        } else {
+            // Update minVolumeSample
+            minVolumeSample.current = minVolumeSample.current.length > 0
+                ? minVolumeSample.current.map((val) => alpha * dbFS + (1 - alpha) * val)
+                : [dbFS];
         }
 
-        // User is not making sound 
-        if (dbFS !== -Infinity && dbFS < silenceThreshold) {
-            minVolume.current = [...minVolume.current.slice(-20), dbFS];
-        }
-
-        console.log('dbFS', dbFS, 'maxAverage:', maxAverage, 'minAverage:', minAverage);
+        setVolumeAverages({ min: minAverage, max: maxAverage });
+        setSilenceThreshold(minAverage + 25);
     }
 
     //Drives the checkAudio function
@@ -154,6 +169,7 @@ export default function useAudioContext() {
         inputStream,
         audioContext,
         isPlaybackActive,
+        volumeAverages,
         // Will eventually be more or less hardcoded, and not needed to be passed around
         setShortSilenceDuration,
         shortSilenceDuration,
