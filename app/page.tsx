@@ -11,6 +11,8 @@ import getVoiceTranscription from "@/actions/getVoiceTranscription";
 import useAudioContext from "@/hooks/useAudioContext";
 import useRecordAudio from "@/hooks/useRecordAudio";
 
+import * as Tone from "tone";
+
 const COLOR_MAP = {
   user: "bg-blue-200",
   assistant: "bg-green-200",
@@ -292,17 +294,24 @@ function AdvancedAudioRecorder() {
         );
         if (isPlaybackActive.current === false) {
           isPlaybackActive.current = true;
-          const source = audioContext.current.createBufferSource();
+          // const source = audioContext.current.createBufferSource();
           const currentAudioData = audioData.current.shift();
           if (currentAudioData) {
-            source.buffer = currentAudioData.audioBuffer;
-            source.connect(audioContext.current.destination);
-            source.onended = () => {
+            // source.buffer = currentAudioData.audioBuffer;
+            // source.connect(audioContext.current.destination);
+            // source.onended = () => {
+            //   isPlaybackActive.current = false;
+            //   console.log("Playback ended");
+            //   playNextAudio(); // Play the next audio data
+            // };
+            // source.start();
+            const player = new Tone.Player(currentAudioData.audioBuffer).toDestination();
+            player.onstop = () => {
               isPlaybackActive.current = false;
               console.log("Playback ended");
-              playNextAudio(); // Play the next audio data
-            };
-            source.start();
+              playNextAudio();
+            }
+            player.start();
             spokenText.current += currentAudioData.text;
           }
         }

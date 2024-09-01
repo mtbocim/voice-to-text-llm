@@ -1,15 +1,31 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import React, { useState, useRef, useCallback, useEffect } from "react";
 import * as Tone from 'tone'; // Import Tone.js
 
+interface UseAudioContextReturnType {
+    startListening: (selectedAudioInput: string) => Promise<void>;
+    stopListening: () => void;
+    volume: number;
+    isRecordingStatus: React.MutableRefObject<boolean>;
+    isListeningStatus: boolean;
+    inputStream: React.MutableRefObject<MediaStream | null>;
+    audioContext: React.MutableRefObject<Tone.Context | null>;
+    isPlaybackActive: React.MutableRefObject<boolean>;
+    volumeAverages: { min: number, max: number };
+    // Will eventually be more or less hardcoded, and not needed to be passed around
+    setShortSilenceDuration: React.Dispatch<React.SetStateAction<number>>;
+    shortSilenceDuration: number;
+    setSilenceThreshold: React.Dispatch<React.SetStateAction<number>>;
+    silenceThreshold: number;
+}
 
-export default function useAudioContext() {
+export default function useAudioContext(): UseAudioContextReturnType {
     const [isListeningStatus, setIsListeningStatus] = useState<boolean>(false);
     const [volume, setVolume] = useState<number>(-Infinity);
     const [shortSilenceDuration, setShortSilenceDuration] = useState<number>(500);
     const [silenceThreshold, setSilenceThreshold] = useState<number>(-38);
 
     const audioData = useRef<{ audioBuffer: AudioBuffer; text: string }[]>([]);
-    const audioContext = useRef<AudioContext | null>(null);
+    const audioContext = useRef<Tone.Context | null>(null);
     const inputStream = useRef<MediaStream | null>(null);
     const analyser = useRef<AnalyserNode | null>(null);
     const timeDomainDataArray = useRef<Float32Array | null>(null);
@@ -36,7 +52,7 @@ export default function useAudioContext() {
             inputStream.current = await navigator.mediaDevices.getUserMedia({
                 audio: { deviceId: selectedAudioInput ? { exact: selectedAudioInput } : undefined }
             });
-            audioContext.current = new AudioContext();
+            audioContext.current = new Tone.Context();
             analyser.current = audioContext.current.createAnalyser();
             const source: MediaStreamAudioSourceNode = audioContext.current.createMediaStreamSource(inputStream.current);
             source.connect(analyser.current);
@@ -195,3 +211,4 @@ export default function useAudioContext() {
         silenceThreshold,
     };
 }
+
