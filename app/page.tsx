@@ -2,8 +2,7 @@
 
 /*
 TODO:
-    Add silence volume detection for dynamic silence threshold setting
-    Additionally, add a cutoff so that random quiet noise aren't recorded
+  dd a cutoff so that random quiet noise aren't recorded
 */
 
 import React, { useState, useRef, useEffect, useCallback } from "react";
@@ -25,7 +24,6 @@ function AdvancedAudioRecorder() {
     startListening,
     stopListening,
     setShortSilenceDuration,
-    setSilenceThreshold,
     volume,
     volumeAverages,
     isRecordingStatus,
@@ -97,6 +95,52 @@ function AdvancedAudioRecorder() {
 
   const processTextStream = useCallback(
     async function processTextStream(response: Response) {
+      async function getTextToVoice(
+        priorText: string,
+        currentSentence: string,
+        voice: string
+      ): Promise<AudioBuffer | undefined> {
+        if (!currentSentence || currentSentence === "") {
+          console.log("No text to process");
+          return undefined;
+        }
+
+        const response = await fetch("/api/generateVoiceResponse", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            previousText: priorText,
+            currentSentence,
+            voice: voice,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error("Network response was not ok");
+        }
+        if (!response.body) {
+          throw new Error("Response body is undefined");
+        }
+        try {
+          const audioChunks = [];
+          const reader = response.body.getReader();
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            audioChunks.push(value);
+          }
+          const arrayBuffer = await new Blob(audioChunks).arrayBuffer();
+          const audioData = await audioContext.current?.decodeAudioData(
+            arrayBuffer
+          );
+          return audioData;
+        } catch (error) {
+          console.error("Error processing audio data:", error);
+        }
+      }
+      
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
       let processedText = "";
@@ -163,52 +207,6 @@ function AdvancedAudioRecorder() {
     },
     [selectedTTSVoice, isRecordingStatus]
   );
-
-  async function getTextToVoice(
-    priorText: string,
-    currentSentence: string,
-    voice: string
-  ): Promise<AudioBuffer | undefined> {
-    if (!currentSentence || currentSentence === "") {
-      console.log("No text to process");
-      return undefined;
-    }
-
-    const response = await fetch("/api/generateVoiceResponse", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        previousText: priorText,
-        currentSentence,
-        voice: voice,
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error("Network response was not ok");
-    }
-    if (!response.body) {
-      throw new Error("Response body is undefined");
-    }
-    try {
-      const audioChunks = [];
-      const reader = response.body.getReader();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        audioChunks.push(value);
-      }
-      const arrayBuffer = await new Blob(audioChunks).arrayBuffer();
-      const audioData = await audioContext.current?.decodeAudioData(
-        arrayBuffer
-      );
-      return audioData;
-    } catch (error) {
-      console.error("Error processing audio data:", error);
-    }
-  }
 
   /**
    * Adds the current transcription to the chat and resets the transcription state
@@ -514,9 +512,6 @@ function AdvancedAudioRecorder() {
             min="-100"
             max="0"
             value={silenceThreshold}
-            // onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-            //   setSilenceThreshold(Number(e.target.value))
-            // }
             readOnly
             className="w-full"
           />

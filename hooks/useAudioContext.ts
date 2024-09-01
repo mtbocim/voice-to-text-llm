@@ -1,4 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
+import * as Tone from 'tone'; // Import Tone.js
+
 
 export default function useAudioContext() {
     const [isListeningStatus, setIsListeningStatus] = useState<boolean>(false);
@@ -10,18 +12,20 @@ export default function useAudioContext() {
     const audioContext = useRef<AudioContext | null>(null);
     const inputStream = useRef<MediaStream | null>(null);
     const analyser = useRef<AnalyserNode | null>(null);
-    const dataArray = useRef<Float32Array | null>(null);
+    const timeDomainDataArray = useRef<Float32Array | null>(null);
     const silenceStartTime = useRef<number | null>(null);
     const longSilenceTimer = useRef<NodeJS.Timeout | null>(null);
     const isRecordingStatus = useRef(false);
     const mediaRecorder = useRef<MediaRecorder | null>(null);
     const isPlaybackActive = useRef(false);
-
+    
     // Want to track min/max volume for dynamic thresholding
     const minVolumeSample = useRef<number[]>([-70]);
     const maxVolumeSample = useRef<number[]>([0]);
-    const [volumeAverages, setVolumeAverages] = useState<{ min: number, max: number }>({ min: -100, max: 0 });
-
+    const [volumeAverages, setVolumeAverages] = useState<{ min: number, max: number }>({ min: -70, max: 0 });
+    
+    // For testing purposes, might remove later
+    const freqDataArray = useRef<Float32Array | null>(null);
 
     /**
     * Creates audio context and other nodes to start listening
@@ -38,8 +42,8 @@ export default function useAudioContext() {
             source.connect(analyser.current);
 
             analyser.current.fftSize = 2048;
-            dataArray.current = new Float32Array(analyser.current.fftSize);
-
+            timeDomainDataArray.current = new Float32Array(analyser.current.fftSize);
+            freqDataArray.current = new Float32Array(analyser.current.frequencyBinCount);
             setIsListeningStatus(true);
             checkAudio();
             console.log('Listening started');
@@ -47,6 +51,7 @@ export default function useAudioContext() {
             console.error('Error accessing microphone:', error);
         }
     }
+    // Stops listening and resets all the values
 
     function stopListening(): void {
         console.log('Stopping listening...');
@@ -79,10 +84,23 @@ export default function useAudioContext() {
     const checkAudio = useCallback(() => {
         // Cancel startup if audioContext is not set
         // This stops the recursive call to checkAudio
-        if (!analyser.current || !dataArray.current) return;
+        if (!analyser.current || !timeDomainDataArray.current || !freqDataArray.current) return;
 
-        analyser.current.getFloatTimeDomainData(dataArray.current);
-        const rms: number = Math.sqrt(dataArray.current.reduce((sum, val) => sum + val * val, 0) / dataArray.current.length);
+        analyser.current.getFloatTimeDomainData(timeDomainDataArray.current);
+        
+        //calculate the user's vocal frequencies so I can filter out extraneous noise
+        analyser.current.getFloatFrequencyData(freqDataArray.current);
+        const lowFreqIndex = Math.floor(freqDataArray.current.length * 0.1); // 10% of the array
+        const midFreqIndex = Math.floor(freqDataArray.current.length * 0.5); // 50%
+        const highFreqIndex = Math.floor(freqDataArray.current.length * 0.9); // 90%
+
+        console.log(
+            "Frequency Data Summary:",
+            "\nLow Freq:", freqDataArray.current[lowFreqIndex],
+            "\nMid Freq:", freqDataArray.current[midFreqIndex],
+            "\nHigh Freq:", freqDataArray.current[highFreqIndex]
+        );
+        const rms: number = Math.sqrt(timeDomainDataArray.current.reduce((sum, val) => sum + val * val, 0) / timeDomainDataArray.current.length);
         const dbFS: number = 20 * Math.log10(rms);
         setVolume(dbFS);
         adjustMinMax(dbFS);
@@ -127,9 +145,9 @@ export default function useAudioContext() {
         // https://en.wikipedia.org/wiki/Moving_average
         // Hysteresis to prevent rapid switching between states
         // https://en.wikipedia.org/wiki/Hysteresis
-        const maxHysteresis = 3; // dB 
+        const maxHysteresis = 5; // dB 
         const minHysteresis = 3; // dB
-        const alpha = 0.05; // EMA smoothing factor (adjust as needed)
+        const alpha = 0.01; // EMA smoothing factor (adjust as needed)
 
         if (Math.abs(dbFS - (maxAverage + maxHysteresis)) < Math.abs(dbFS - (minAverage - minHysteresis))) {
             // Update maxVolumeSample
@@ -144,7 +162,7 @@ export default function useAudioContext() {
         }
 
         setVolumeAverages({ min: minAverage, max: maxAverage });
-        setSilenceThreshold(minAverage + 25);
+        setSilenceThreshold(minAverage + 30);
     }
 
     //Drives the checkAudio function
