@@ -2,7 +2,7 @@
 
 /*
 TODO:
-  dd a cutoff so that random quiet noise aren't recorded
+  add a cutoff so that random quiet noise aren't recorded
 */
 
 import React, { useState, useRef, useEffect, useCallback } from "react";
@@ -33,12 +33,13 @@ function AdvancedAudioRecorder() {
     isPlaybackActive,
     silenceThreshold,
     shortSilenceDuration,
-    inputStream,
+    // inputStream,
     audioContext,
+    inputDevice
   } = useAudioContext();
 
   const { startRecording, stopRecording, speechToTextDataQueue } =
-    useRecordAudio();
+    useRecordAudio(inputDevice);
 
   // Updating UI (which includes audio playback), keep as state
   const [chatContext, setChatContext] = useState<
@@ -260,14 +261,14 @@ function AdvancedAudioRecorder() {
     // - I'm not already recording
     // - I'm not processing the transcript
     // - Nothing is currently playing
-    console.log(isRecordingStatus.current, inputStream.current, isPlaybackActive.current, blockRecording.current);
+    console.log("isRecordingStatus", isRecordingStatus.current, "isPlaybackActive", isPlaybackActive.current, "blockRecording", blockRecording.current);
     if (
       isRecordingStatus.current &&
-      inputStream.current &&
+      // mic.current?.state !== 'started' &&
       !isPlaybackActive.current &&
       !blockRecording.current
     ) {
-      startRecording(inputStream.current);
+      startRecording();
     } else {
       stopRecording();
     }
@@ -294,17 +295,8 @@ function AdvancedAudioRecorder() {
         );
         if (isPlaybackActive.current === false) {
           isPlaybackActive.current = true;
-          // const source = audioContext.current.createBufferSource();
           const currentAudioData = audioData.current.shift();
           if (currentAudioData) {
-            // source.buffer = currentAudioData.audioBuffer;
-            // source.connect(audioContext.current.destination);
-            // source.onended = () => {
-            //   isPlaybackActive.current = false;
-            //   console.log("Playback ended");
-            //   playNextAudio(); // Play the next audio data
-            // };
-            // source.start();
             const player = new Tone.Player(currentAudioData.audioBuffer).toDestination();
             player.onstop = () => {
               isPlaybackActive.current = false;
@@ -363,10 +355,12 @@ function AdvancedAudioRecorder() {
     async function fetchAvailableVoices() {
       const response = await fetch("https://api.elevenlabs.io/v1/voices");
       const data = await response.json();
+      const voices = data.voices.map((i: { voice_id: string; name: string }) => i.name).sort();
+      console.log("Available voices:", voices);
       setAvailableVoices(
-        data.voices.map((i: { voice_id: string; name: string }) => i.name)
+        voices
       );
-      setVoice(data.voices[0].name);
+      setVoice(voices[0]);
     }
     if (false) {
       setAvailableVoices(OPENAI_VOICES);

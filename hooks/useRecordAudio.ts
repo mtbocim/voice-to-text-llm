@@ -1,42 +1,43 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useEffect } from "react";
+import * as Tone from 'tone';
 
-interface MediaRecorderRef {
-    current: MediaRecorder | null;
+interface UseRecordAudioReturnType {
+    startRecording: () => void;
+    stopRecording: () => void;
+    speechToTextDataQueue: React.MutableRefObject<Blob[]>;
 }
 
-export default function useRecordAudio() { 
-    const mediaRecorder: MediaRecorderRef = useRef(null);
+export default function useRecordAudio(inputDevice: React.MutableRefObject<Tone.UserMedia | null | undefined>): UseRecordAudioReturnType {
+    const recorder = useRef<Tone.Recorder | null>(null);
     const speechToTextDataQueue = useRef<Blob[]>([]);
-    const audioChunk = useRef<Blob | null>(null);
 
-    const startRecording = useCallback(function startRecording(stream:MediaStream): void {
-        function handleDataAvailable(event: BlobEvent): void {
-            if (event.data.size > 0) {
-                audioChunk.current = event.data;
+    useEffect(() => {
+        recorder.current = new Tone.Recorder();
+        return () => {
+            if (recorder.current) {
+                recorder.current.dispose();
+            }
+        };
+    }, []);
+
+    const startRecording = useCallback(() => {
+        if (inputDevice.current && recorder.current && recorder.current.state !== 'started') {
+            inputDevice.current.connect(recorder.current);
+            recorder.current.start();
+        }
+    }, [inputDevice]);
+
+    const stopRecording = useCallback(async () => {
+        if (recorder.current?.state === 'started') {
+            const recording = await recorder.current.stop();
+            const blob = new Blob([recording], { type: 'audio/webm' });
+            speechToTextDataQueue.current.push(blob);
+
+            if (inputDevice.current) {
+                inputDevice.current.disconnect(recorder.current);
             }
         }
-
-        // When called creates a closure, can't see current state data
-        function handleRecordingStop(): void {
-            if (audioChunk.current) {
-                speechToTextDataQueue.current.push(audioChunk.current);
-            }
-            mediaRecorder.current = null;
-        }
-
-        if (stream && !mediaRecorder.current) {
-            mediaRecorder.current = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-            mediaRecorder.current.ondataavailable = handleDataAvailable;
-            mediaRecorder.current.onstop = handleRecordingStop;
-            mediaRecorder.current.start();
-        }
-    }, [])
-
-    function stopRecording(): void {
-        if (mediaRecorder.current && mediaRecorder.current.state !== 'inactive') {
-            mediaRecorder.current.stop();
-        }
-    }
+    }, [inputDevice]);
 
     return { startRecording, stopRecording, speechToTextDataQueue };
 }
