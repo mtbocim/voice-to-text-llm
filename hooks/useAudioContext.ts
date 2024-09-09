@@ -1,6 +1,13 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import * as Tone from 'tone'; // Import Tone.js
 
+/*
+    TODO:
+        - handle loud background volumes, should be able to start at a higher volume
+        - code should assume silence when first activated... I could add a 2 sec. loading/setup timer to collect data?
+        - In that way the first time recording is activated, I can pickup those specific frequecies for tone focus
+*/
+
 interface UseAudioContextReturnType {
     startListening: (selectedAudioInput: string) => Promise<void>;
     stopListening: () => void;
@@ -16,6 +23,7 @@ interface UseAudioContextReturnType {
     setSilenceThreshold: React.Dispatch<React.SetStateAction<number>>;
     silenceThreshold: number;
     inputDevice: React.MutableRefObject<Tone.UserMedia | null | undefined>;
+    waveformAnalyser: React.MutableRefObject<Tone.Analyser | null | undefined>;
 }
 
 export default function useAudioContext(): UseAudioContextReturnType {
@@ -31,6 +39,7 @@ export default function useAudioContext(): UseAudioContextReturnType {
     const isRecordingStatus = useRef(false);
     const mediaRecorder = useRef<MediaRecorder | null>(null);
     const isPlaybackActive = useRef(false);
+    const waveformAnalyser = useRef<Tone.Analyser | null>();
 
     // Want to track min/max volume for dynamic thresholding
     const minVolumeSample = useRef<number[]>([-70]);
@@ -63,9 +72,11 @@ export default function useAudioContext(): UseAudioContextReturnType {
             meter.current = new Tone.Meter();
             lowFilter.current = new Tone.Filter(150, 'highpass', -24);
             analyser.current = new Tone.Analyser('fft', 2048);
+            waveformAnalyser.current = new Tone.Analyser('waveform', 4096);
+            // const filteredSignal = new Tone.Waveform(4096); // Create a Waveform node
 
             await inputDevice.current.open(chosenDevice.deviceId);
-            inputDevice.current.chain(lowFilter.current, meter.current, analyser.current);
+            inputDevice.current.chain(lowFilter.current, meter.current, analyser.current, waveformAnalyser.current)
 
 
             setIsListeningStatus(true);
@@ -118,27 +129,27 @@ export default function useAudioContext(): UseAudioContextReturnType {
         let totalMagnitude = 0;
         let significantFrequencies = [];
 
-        for (let i = 0; i < binCount; i++) {
-            const magnitude = data[i];
-            totalMagnitude += magnitude;
+        // for (let i = 0; i < binCount; i++) {
+        //     const magnitude = data[i];
+        //     totalMagnitude += magnitude;
 
-            if (magnitude > maxMagnitude) {
-                maxMagnitude = magnitude;
-                dominantFrequencyIndex = i;
-            }
+        //     if (magnitude > maxMagnitude) {
+        //         maxMagnitude = magnitude;
+        //         dominantFrequencyIndex = i;
+        //     }
 
-            const frequency = (i * sampleRate) / (analyser.current!.size * 2);
-            if (magnitude > -100) { // Adjust this threshold as needed
-                significantFrequencies.push({ frequency, magnitude });
-            }
-        }
+        //     const frequency = (i * sampleRate) / (analyser.current!.size * 2);
+        //     if (magnitude > -100) { // Adjust this threshold as needed
+        //         significantFrequencies.push({ frequency, magnitude });
+        //     }
+        // }
 
-        const dominantFrequency = (dominantFrequencyIndex * sampleRate) / (analyser.current!.size * 2);
-        const averageMagnitude = totalMagnitude / binCount;
+        // const dominantFrequency = (dominantFrequencyIndex * sampleRate) / (analyser.current!.size * 2);
+        // const averageMagnitude = totalMagnitude / binCount;
 
         // Sort significant frequencies by magnitude
-        significantFrequencies.sort((a, b) => b.magnitude - a.magnitude); 
-        console.log(significantFrequencies.slice(0, 10), dominantFrequency, averageMagnitude);
+        // significantFrequencies.sort((a, b) => b.magnitude - a.magnitude); 
+        // console.log(significantFrequencies.slice(0, 10), dominantFrequency, averageMagnitude);
         const dbFS = meter.current?.getValue() as number;
         setVolume(dbFS);
         adjustMinMax(dbFS);
@@ -171,6 +182,7 @@ export default function useAudioContext(): UseAudioContextReturnType {
     }, [shortSilenceDuration, silenceThreshold]);
 
     // Where I calculate the min/max volume for dynamic silence thresholding
+    // Still deciding if I want to base on min or max
     function adjustMinMax(dbFS: number) {
         // Don't ever care about storing this case
         if (dbFS === -Infinity) return;
@@ -203,6 +215,10 @@ export default function useAudioContext(): UseAudioContextReturnType {
         setSilenceThreshold(maxAverage - 18);
     }
 
+    // High pass filter calculation function
+
+    // Band pass filter calculation function for attenuation to user voice
+
     //Drives the checkAudio function
     useEffect(() => {
         let intervalId: NodeJS.Timeout | null = null;
@@ -226,6 +242,7 @@ export default function useAudioContext(): UseAudioContextReturnType {
         audioContext,
         isPlaybackActive,
         volumeAverages,
+        waveformAnalyser,
         // Will eventually be more or less hardcoded, and not needed to be passed around
         setShortSilenceDuration,
         shortSilenceDuration,

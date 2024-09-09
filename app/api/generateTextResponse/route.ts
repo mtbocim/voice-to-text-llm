@@ -18,7 +18,7 @@ export async function POST(req: Request) {
         async start(controller) {
             const { textStream } = await streamText({
                 model: anthropic('claude-3-5-sonnet-20240620'),
-                system: improvPersona + `The users message is ${length} characters long. `,
+                system: generalPersona + `The users message is ${length} characters long. `,
                 messages:messages.filter(m=>m.role !== 'feedback').slice(-7),
                 maxTokens: 75,
             });

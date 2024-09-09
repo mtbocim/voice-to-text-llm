@@ -2,7 +2,7 @@
 
 /*
 TODO:
-  add a cutoff so that random quiet noise aren't recorded
+  - add a cutoff so that random quiet noise aren't recorded
 */
 
 import React, { useState, useRef, useEffect, useCallback } from "react";
@@ -10,6 +10,7 @@ import { Accordion, AccordionItem } from "@nextui-org/react";
 import getVoiceTranscription from "@/actions/getVoiceTranscription";
 import useAudioContext from "@/hooks/useAudioContext";
 import useRecordAudio from "@/hooks/useRecordAudio";
+import useTranscriber from "@/hooks/useTranscriber";
 
 import * as Tone from "tone";
 
@@ -35,8 +36,16 @@ function AdvancedAudioRecorder() {
     shortSilenceDuration,
     // inputStream,
     audioContext,
-    inputDevice
+    inputDevice,
+    waveformAnalyser,
   } = useAudioContext();
+
+  const {
+    startTranscription,
+    stopTranscription,
+    transcriptText,
+    isTranscribing,
+  } = useTranscriber(waveformAnalyser);
 
   const { startRecording, stopRecording, speechToTextDataQueue } =
     useRecordAudio(inputDevice);
@@ -143,7 +152,7 @@ function AdvancedAudioRecorder() {
           console.error("Error processing audio data:", error);
         }
       }
-      
+
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
       let processedText = "";
@@ -229,13 +238,13 @@ function AdvancedAudioRecorder() {
         },
         body: JSON.stringify({ messages: [...chatContext, currentMessage] }),
       });
-      const feedbackResponse = fetch("/api/generateFeedbackResponse", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ messages: [...chatContext, currentMessage] }),
-      });
+      // const feedbackResponse = fetch("/api/generateFeedbackResponse", {
+      //   method: "POST",
+      //   headers: {
+      //     "Content-Type": "application/json",
+      //   },
+      //   body: JSON.stringify({ messages: [...chatContext, currentMessage] }),
+      // });
       let processedText = await processTextStream(response);
       if (processedText.trim() === "") {
         // Placeholder until I have a better idea of why an empty string would be generated as a response
@@ -247,10 +256,10 @@ function AdvancedAudioRecorder() {
         { role: "assistant", content: processedText },
       ]);
       currentTranscription.current = "";
-      const feedback = await feedbackResponse;
-      const feedbackData = await feedback.json();
+      // const feedback = await feedbackResponse;
+      // const feedbackData = await feedback.json();
       // console.log('Feedback:', feedbackData.text);
-      setFeedback(feedbackData.text);
+      // setFeedback(feedbackData.text);
     },
     [chatContext, processTextStream]
   );
@@ -261,7 +270,14 @@ function AdvancedAudioRecorder() {
     // - I'm not already recording
     // - I'm not processing the transcript
     // - Nothing is currently playing
-    console.log("isRecordingStatus", isRecordingStatus.current, "isPlaybackActive", isPlaybackActive.current, "blockRecording", blockRecording.current);
+    // console.log(
+    //   "isRecordingStatus",
+    //   isRecordingStatus.current,
+    //   "isPlaybackActive",
+    //   isPlaybackActive.current,
+    //   "blockRecording",
+    //   blockRecording.current
+    // );
     if (
       isRecordingStatus.current &&
       // mic.current?.state !== 'started' &&
@@ -273,6 +289,13 @@ function AdvancedAudioRecorder() {
       stopRecording();
     }
   }, [volume, startRecording, isRecordingStatus]);
+
+  useEffect(() => {
+    startTranscription();
+    return () => {
+      stopTranscription();
+    };
+  }, [startTranscription, stopTranscription]);
 
   /**
    * Plays the audio data
@@ -297,12 +320,14 @@ function AdvancedAudioRecorder() {
           isPlaybackActive.current = true;
           const currentAudioData = audioData.current.shift();
           if (currentAudioData) {
-            const player = new Tone.Player(currentAudioData.audioBuffer).toDestination();
+            const player = new Tone.Player(
+              currentAudioData.audioBuffer
+            ).toDestination();
             player.onstop = () => {
               isPlaybackActive.current = false;
               console.log("Playback ended");
               playNextAudio();
-            }
+            };
             player.start();
             spokenText.current += currentAudioData.text;
           }
@@ -355,11 +380,11 @@ function AdvancedAudioRecorder() {
     async function fetchAvailableVoices() {
       const response = await fetch("https://api.elevenlabs.io/v1/voices");
       const data = await response.json();
-      const voices = data.voices.map((i: { voice_id: string; name: string }) => i.name).sort();
+      const voices = data.voices
+        .map((i: { voice_id: string; name: string }) => i.name)
+        .sort();
       console.log("Available voices:", voices);
-      setAvailableVoices(
-        voices
-      );
+      setAvailableVoices(voices);
       setVoice(voices[0]);
     }
     if (false) {
