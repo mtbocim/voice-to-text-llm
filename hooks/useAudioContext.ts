@@ -1,86 +1,52 @@
-import React, { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import * as Tone from 'tone'; // Import Tone.js
 
-/*
-    TODO:
-        - handle loud background volumes, should be able to start at a higher volume
-        - code should assume silence when first activated... I could add a 2 sec. loading/setup timer to collect data?
-        - In that way the first time recording is activated, I can pickup those specific frequecies for tone focus
-*/
 
-interface UseAudioContextReturnType {
-    startListening: (selectedAudioInput: string) => Promise<void>;
-    stopListening: () => void;
-    volume: number;
-    isRecordingStatus: React.MutableRefObject<boolean>;
-    isListeningStatus: boolean;
-    audioContext: React.MutableRefObject<Tone.BaseContext | null>;
-    isPlaybackActive: React.MutableRefObject<boolean>;
-    volumeAverages: { min: number, max: number };
-    // Will eventually be more or less hardcoded, and not needed to be passed around
-    setShortSilenceDuration: React.Dispatch<React.SetStateAction<number>>;
-    shortSilenceDuration: number;
-    setSilenceThreshold: React.Dispatch<React.SetStateAction<number>>;
-    silenceThreshold: number;
-    inputDevice: React.MutableRefObject<Tone.UserMedia | null | undefined>;
-    waveformAnalyser: React.MutableRefObject<Tone.Analyser | null | undefined>;
-}
-
-export default function useAudioContext(): UseAudioContextReturnType {
+export default function useAudioContext() {
     const [isListeningStatus, setIsListeningStatus] = useState<boolean>(false);
     const [volume, setVolume] = useState<number>(-Infinity);
     const [shortSilenceDuration, setShortSilenceDuration] = useState<number>(500);
-    const [silenceThreshold, setSilenceThreshold] = useState<number>(-20);
+    const [silenceThreshold, setSilenceThreshold] = useState<number>(-38);
 
     const audioData = useRef<{ audioBuffer: AudioBuffer; text: string }[]>([]);
-    const audioContext = useRef<Tone.BaseContext | null>(null);
+    const audioContext = useRef<AudioContext | null>(null);
+    const inputStream = useRef<MediaStream | null>(null);
+    const analyser = useRef<AnalyserNode | null>(null);
+    const timeDomainDataArray = useRef<Float32Array | null>(null);
     const silenceStartTime = useRef<number | null>(null);
     const longSilenceTimer = useRef<NodeJS.Timeout | null>(null);
     const isRecordingStatus = useRef(false);
     const mediaRecorder = useRef<MediaRecorder | null>(null);
     const isPlaybackActive = useRef(false);
-    const waveformAnalyser = useRef<Tone.Analyser | null>();
 
     // Want to track min/max volume for dynamic thresholding
     const minVolumeSample = useRef<number[]>([-70]);
-    const maxVolumeSample = useRef<number[]>([-30]);
+    const maxVolumeSample = useRef<number[]>([0]);
     const [volumeAverages, setVolumeAverages] = useState<{ min: number, max: number }>({ min: -70, max: 0 });
 
-    const meter = useRef<Tone.Meter | null>()
-    const inputDevice = useRef<Tone.UserMedia | null>();
-    const analyser = useRef<Tone.Analyser | null>();
-    const lowFilter = useRef<Tone.Filter | null>();
+    // For testing purposes, might remove later
+    const freqDataArray = useRef<Float32Array | null>(null);
 
     /**
     * Creates audio context and other nodes to start listening
     */
     async function startListening(selectedAudioInput: string): Promise<void> {
         try {
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            const chosenDevice = devices.find(device =>
-                device.deviceId === selectedAudioInput || device.label === selectedAudioInput
-            );
+            console.log('Starting to listen...');
+            inputStream.current = await navigator.mediaDevices.getUserMedia({
+                audio: { deviceId: selectedAudioInput ? { exact: selectedAudioInput } : undefined,  noiseSuppression: true, autoGainControl:true, echoCancellation: true }
+            });
+            audioContext.current = new AudioContext();
+            analyser.current = audioContext.current.createAnalyser();
+            const source: MediaStreamAudioSourceNode = audioContext.current.createMediaStreamSource(inputStream.current);
+            source.connect(analyser.current);
 
-            if (!chosenDevice) {
-                throw new Error("Selected audio input device not found");
-            }
-
-            await Tone.start();
-            audioContext.current = Tone.getContext();
-
-            inputDevice.current = new Tone.UserMedia();
-            meter.current = new Tone.Meter();
-            lowFilter.current = new Tone.Filter(150, 'highpass', -24);
-            analyser.current = new Tone.Analyser('fft', 2048);
-            waveformAnalyser.current = new Tone.Analyser('waveform', 4096);
-            // const filteredSignal = new Tone.Waveform(4096); // Create a Waveform node
-
-            await inputDevice.current.open(chosenDevice.deviceId);
-            inputDevice.current.chain(lowFilter.current, meter.current, analyser.current, waveformAnalyser.current)
-
-
+            analyser.current.fftSize = 2048;
+            timeDomainDataArray.current = new Float32Array(analyser.current.fftSize);
+            freqDataArray.current = new Float32Array(analyser.current.frequencyBinCount);
             setIsListeningStatus(true);
             checkAudio();
+            console.log('Listening started');
         } catch (error) {
             console.error('Error accessing microphone:', error);
         }
@@ -89,19 +55,17 @@ export default function useAudioContext(): UseAudioContextReturnType {
 
     function stopListening(): void {
         console.log('Stopping listening...');
-        if (inputDevice.current) {
-            inputDevice.current.close();
+        if (audioContext.current) {
+            audioContext.current.close();
+            audioContext.current = null;
         }
         if (mediaRecorder.current && mediaRecorder.current.state !== 'inactive') {
             mediaRecorder.current.stop();
         }
-        if (analyser.current) {
-            analyser.current.dispose();
+        if (inputStream.current) {
+            inputStream.current.getTracks().forEach(track => track.stop());
+            inputStream.current = null;
         }
-        if (meter.current) {
-            meter.current.dispose();
-        }
-
         if (longSilenceTimer.current) {
             clearTimeout(longSilenceTimer.current);
         }
@@ -119,38 +83,25 @@ export default function useAudioContext(): UseAudioContextReturnType {
      */
     const checkAudio = useCallback(() => {
         // Cancel startup if audioContext is not set
-        if (!audioContext.current) return;
-        const data = analyser.current?.getValue()
-        const sampleRate = audioContext.current!.sampleRate;
-        const binCount = analyser.current!.size / 2;
+        // This stops the recursive call to checkAudio
+        if (!analyser.current || !timeDomainDataArray.current || !freqDataArray.current) return;
 
-        let maxMagnitude = -Infinity;
-        let dominantFrequencyIndex = 0;
-        let totalMagnitude = 0;
-        let significantFrequencies = [];
+        analyser.current.getFloatTimeDomainData(timeDomainDataArray.current);
 
-        // for (let i = 0; i < binCount; i++) {
-        //     const magnitude = data[i];
-        //     totalMagnitude += magnitude;
+        //calculate the user's vocal frequencies so I can filter out extraneous noise
+        analyser.current.getFloatFrequencyData(freqDataArray.current);
+        const lowFreqIndex = Math.floor(freqDataArray.current.length * 0.1); // 10% of the array
+        const midFreqIndex = Math.floor(freqDataArray.current.length * 0.5); // 50%
+        const highFreqIndex = Math.floor(freqDataArray.current.length * 0.9); // 90%
 
-        //     if (magnitude > maxMagnitude) {
-        //         maxMagnitude = magnitude;
-        //         dominantFrequencyIndex = i;
-        //     }
-
-        //     const frequency = (i * sampleRate) / (analyser.current!.size * 2);
-        //     if (magnitude > -100) { // Adjust this threshold as needed
-        //         significantFrequencies.push({ frequency, magnitude });
-        //     }
-        // }
-
-        // const dominantFrequency = (dominantFrequencyIndex * sampleRate) / (analyser.current!.size * 2);
-        // const averageMagnitude = totalMagnitude / binCount;
-
-        // Sort significant frequencies by magnitude
-        // significantFrequencies.sort((a, b) => b.magnitude - a.magnitude); 
-        // console.log(significantFrequencies.slice(0, 10), dominantFrequency, averageMagnitude);
-        const dbFS = meter.current?.getValue() as number;
+        console.log(
+            "Frequency Data Summary:",
+            "\nLow Freq:", freqDataArray.current[lowFreqIndex],
+            "\nMid Freq:", freqDataArray.current[midFreqIndex],
+            "\nHigh Freq:", freqDataArray.current[highFreqIndex]
+        );
+        const rms: number = Math.sqrt(timeDomainDataArray.current.reduce((sum, val) => sum + val * val, 0) / timeDomainDataArray.current.length);
+        const dbFS: number = 20 * Math.log10(rms);
         setVolume(dbFS);
         adjustMinMax(dbFS);
 
@@ -182,7 +133,6 @@ export default function useAudioContext(): UseAudioContextReturnType {
     }, [shortSilenceDuration, silenceThreshold]);
 
     // Where I calculate the min/max volume for dynamic silence thresholding
-    // Still deciding if I want to base on min or max
     function adjustMinMax(dbFS: number) {
         // Don't ever care about storing this case
         if (dbFS === -Infinity) return;
@@ -195,9 +145,9 @@ export default function useAudioContext(): UseAudioContextReturnType {
         // https://en.wikipedia.org/wiki/Moving_average
         // Hysteresis to prevent rapid switching between states
         // https://en.wikipedia.org/wiki/Hysteresis
-        const maxHysteresis = 6; // dB 
+        const maxHysteresis = 5; // dB 
         const minHysteresis = 3; // dB
-        const alpha = 0.005; // EMA smoothing factor (adjust as needed)
+        const alpha = 0.01; // EMA smoothing factor (adjust as needed)
 
         if (Math.abs(dbFS - (maxAverage + maxHysteresis)) < Math.abs(dbFS - (minAverage - minHysteresis))) {
             // Update maxVolumeSample
@@ -212,12 +162,8 @@ export default function useAudioContext(): UseAudioContextReturnType {
         }
 
         setVolumeAverages({ min: minAverage, max: maxAverage });
-        setSilenceThreshold(maxAverage - 18);
+        setSilenceThreshold(minAverage + 30);
     }
-
-    // High pass filter calculation function
-
-    // Band pass filter calculation function for attenuation to user voice
 
     //Drives the checkAudio function
     useEffect(() => {
@@ -238,11 +184,10 @@ export default function useAudioContext(): UseAudioContextReturnType {
         volume,
         isRecordingStatus,
         isListeningStatus,
-        inputDevice,
+        inputStream,
         audioContext,
         isPlaybackActive,
         volumeAverages,
-        waveformAnalyser,
         // Will eventually be more or less hardcoded, and not needed to be passed around
         setShortSilenceDuration,
         shortSilenceDuration,
@@ -250,4 +195,3 @@ export default function useAudioContext(): UseAudioContextReturnType {
         silenceThreshold,
     };
 }
-
