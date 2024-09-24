@@ -1,10 +1,11 @@
 import { useCallback, useRef } from "react";
 
+//TODO: think about this like real audio equipment
 interface MediaRecorderRef {
     current: MediaRecorder | null;
 }
 
-export default function useRecordAudio() {
+export default function useAudioRecorder() {
     const mediaRecorder: MediaRecorderRef = useRef(null);
     const speechToTextDataQueue = useRef<Blob[]>([]);
     const audioChunk = useRef<Blob | null>(null);

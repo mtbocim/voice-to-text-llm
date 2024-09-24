@@ -7,9 +7,10 @@ TODO:
 
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { Accordion, AccordionItem } from "@nextui-org/react";
-import getVoiceTranscription from "@/actions/getVoiceTranscription";
 import useAudioContext from "@/hooks/useAudioContext";
-import useRecordAudio from "@/hooks/useRecordAudio";
+import useAudioRecorder from "@/hooks/useAudioRecorder";
+import useCreateVoiceResponse from "@/hooks/useTTS";
+import useTranscriber from "@/hooks/useTransciber";
 
 const COLOR_MAP = {
     user: "bg-blue-200",
@@ -25,7 +26,6 @@ function AdvancedAudioRecorder() {
         stopListening,
         setShortSilenceDuration,
         volume,
-        volumeAverages,
         isRecordingStatus,
         isListeningStatus,
         isPlaybackActive,
@@ -36,7 +36,11 @@ function AdvancedAudioRecorder() {
     } = useAudioContext();
 
     const { startRecording, stopRecording, speechToTextDataQueue } =
-        useRecordAudio();
+        useAudioRecorder();
+
+    const { processQueue, fetchingVoiceTranscription, isMidSentence, transcription } = useTranscriber();
+
+    const { processTextStream } = useCreateVoiceResponse();
 
     // Updating UI (which includes audio playback), keep as state
     const [chatContext, setChatContext] = useState<
@@ -48,8 +52,8 @@ function AdvancedAudioRecorder() {
     const [selectedAudioInput, setSelectedAudioInput] = useState<string>("");
     const [availableTTSVoices, setAvailableVoices] = useState<string[]>([]);
     const [selectedTTSVoice, setVoice] = useState<string>("");
-    const [fetchingVoiceTranscription, setFetchingVoiceTranscription] =
-        useState<boolean>(false);
+    // const [fetchingVoiceTranscription, setFetchingVoiceTranscription] =
+    //     useState<boolean>(false);
     const [processTranscription, setProcessTranscription] =
         useState<boolean>(false);
     const [feedback, setFeedback] = useState<string>("");
@@ -63,152 +67,7 @@ function AdvancedAudioRecorder() {
     const isInMiddleOfSentence = useRef<boolean>(false);
     const blockRecording = useRef<boolean>(false);
 
-    /**
-     * Processes the audio queue and sends the audio to the OpenAI API for transcription
-     */
-    async function processQueue(): Promise<void> {
-        while (speechToTextDataQueue.current.length > 0) {
-            const formData = new FormData();
-            const audioChunk = speechToTextDataQueue.current.shift() as Blob;
-            formData.append("file", audioChunk, "audio.webm");
-            formData.append("model", "whisper-1");
-            formData.append("previousTranscript", currentTranscription.current);
-            try {
-                const results = await getVoiceTranscription(formData);
-                if (results) {
-                    currentTranscription.current =
-                        currentTranscription.current + " " + results.newText;
-                    isInMiddleOfSentence.current = results.isMidSentence;
-
-                    // Possible point of sending STT data, not mandatory
-                    setProcessTranscription(!results.isMidSentence);
-                }
-                console.log("currentTranscription in processQueue:", results);
-            } catch (error) {
-                console.error("Error processing queue:", error);
-            }
-
-            // Prompt check for if the user sounds like they have completed a thought
-        }
-        setFetchingVoiceTranscription(false);
-    }
-
-    const processTextStream = useCallback(
-        async function processTextStream(response: Response) {
-            async function getTextToVoice(
-                priorText: string,
-                currentSentence: string,
-                voice: string
-            ): Promise<AudioBuffer | undefined> {
-                if (!currentSentence || currentSentence === "") {
-                    console.log("No text to process");
-                    return undefined;
-                }
-
-                const response = await fetch("/api/generateVoiceResponse", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                        previousText: priorText,
-                        currentSentence,
-                        voice: voice,
-                    }),
-                });
-
-                if (!response.ok) {
-                    throw new Error("Network response was not ok");
-                }
-                if (!response.body) {
-                    throw new Error("Response body is undefined");
-                }
-                try {
-                    const audioChunks = [];
-                    const reader = response.body.getReader();
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-                        audioChunks.push(value);
-                    }
-                    const arrayBuffer = await new Blob(audioChunks).arrayBuffer();
-                    const audioData = await audioContext.current?.decodeAudioData(
-                        arrayBuffer
-                    );
-                    return audioData;
-                } catch (error) {
-                    console.error("Error processing audio data:", error);
-                }
-            }
-
-            const reader = response.body?.getReader();
-            const decoder = new TextDecoder();
-            let processedText = "";
-            let completeText = "";
-
-            while (true && reader) {
-                if (!audioContext.current) {
-                    break;
-                }
-                const { done, value } = await reader.read();
-
-                const textChunk = decoder.decode(value, { stream: true });
-                completeText += textChunk;
-                const sentences = completeText.match(/(.+?[.:!?\r\n])\s?/gm) || [];
-                const message = sentences.join("").replace(processedText, "");
-                if (message.length > 20) {
-                    const audioBuffer = await getTextToVoice(
-                        processedText,
-                        message,
-                        selectedTTSVoice
-                    );
-
-                    if (audioBuffer) {
-                        audioData.current.push({
-                            audioBuffer,
-                            text: message,
-                        });
-                        processedText += message;
-                    }
-                }
-                console.log("done:", done, "isRecordingStatus:", isRecordingStatus);
-                if (done) {
-                    // TODO: Need to decide if I want truncated text or not, maybe easier to not?
-                    // Make sure we got the last bit of text in case it doesn't end with a punctuation mark
-                    // const message = completeText.replace(processedText, '');
-                    // const audioBuffer = await getTextToVoice(processedText, message, selectedTTSVoice);
-                    // console.log('Adding to audioToPlay:', new Date() - start);
-
-                    // if (audioBuffer) {
-                    //     audioToPlay.current.push(audioBuffer);
-                    //     processedText += message;
-                    // }
-                    break;
-                }
-
-                // For this to work well I need to track which audio is playing and then only use text up to that point
-                // if(isRecordingStatus.current) {
-                //     // Need to stop playback here
-                //     audioContext.current?.close();
-                //     audioData.current = [];
-                //     const text = spokenText.current;
-                //     spokenText.current = '';
-                //     return text;
-                // }
-
-                console.log(
-                    "What is textChunk:",
-                    textChunk,
-                    "\nWhat is processedText: ",
-                    processedText
-                );
-            }
-            return processedText;
-        },
-        [selectedTTSVoice, isRecordingStatus]
-    );
-
-    /**
+     /**
      * Adds the current transcription to the chat and resets the transcription state
      *
      * Accepts the current transcription and adds it to the chat context
@@ -233,7 +92,7 @@ function AdvancedAudioRecorder() {
                 },
                 body: JSON.stringify({ messages: [...chatContext, currentMessage] }),
             });
-            let processedText = await processTextStream(response);
+            let processedText = await processTextStream(response, audioContext, audioData, selectedTTSVoice, isRecordingStatus);
             if (processedText.trim() === "") {
                 // Placeholder until I have a better idea of why an empty string would be generated as a response
                 processedText = "...";
@@ -252,13 +111,17 @@ function AdvancedAudioRecorder() {
         [chatContext, processTextStream]
     );
 
+
+    /**
+     * This use effect controls starting and stopping the recording (mic input)
+     */
     useEffect(() => {
-        // Conditions for recording:
+        // Conditions for starting recording:
         // - I'm talking
         // - I'm not already recording
         // - I'm not processing the transcript
         // - Nothing is currently playing
-        console.log(isRecordingStatus.current, inputStream.current, isPlaybackActive.current, blockRecording.current);
+        // TODO: Evaluate how start and stop happen and if there is a third "do nothing" state, maybe I want to 'pause'?
         if (
             isRecordingStatus.current &&
             inputStream.current &&
@@ -269,7 +132,7 @@ function AdvancedAudioRecorder() {
         } else {
             stopRecording();
         }
-    }, [volume, startRecording, isRecordingStatus]);
+    }, [startRecording, stopRecording, isRecordingStatus, isPlaybackActive, inputStream]);
 
     /**
      * Plays the audio data
@@ -317,10 +180,10 @@ function AdvancedAudioRecorder() {
             }
         };
 
-        if (audioData.current.length > 0 && !isPlaybackActive.current) {
+        if (audioData.current.length > 0 && !isPlaybackActive.current && !isRecordingStatus.current) {
             playNextAudio();
         }
-    }, [audioData.current.length, audioContext, isPlaybackActive]);
+    }, [audioData.current.length, audioContext, isPlaybackActive, isRecordingStatus]);
 
     /********************************************************Data */
 
@@ -432,8 +295,8 @@ function AdvancedAudioRecorder() {
             speechToTextDataQueue.current.length > 0 &&
             !fetchingVoiceTranscription
         ) {
-            setFetchingVoiceTranscription(true);
-            processQueue();
+            // setFetchingVoiceTranscription(true);
+            processQueue(speechToTextDataQueue.current);
         }
     }, [speechToTextDataQueue.current.length, fetchingVoiceTranscription]);
 

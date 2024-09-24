@@ -50,6 +50,7 @@ export default function useCreateVoiceResponse() {
         audioData: { current: { audioBuffer: AudioBuffer, text: string }[] | null },
         selectedTTSVoice: string,
         isRecordingStatus: React.MutableRefObject<boolean>) {
+        
         const reader = response.body?.getReader();
         const decoder = new TextDecoder();
         let processedText = '';

@@ -1,9 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import * as Tone from 'tone'; // Import Tone.js
-
 
 export default function useAudioContext() {
-    const [isListeningStatus, setIsListeningStatus] = useState<boolean>(false);
+    const [isAudioContextActive, setIsAudioContextActive] = useState<boolean>(false);
     const [volume, setVolume] = useState<number>(-Infinity);
     const [shortSilenceDuration, setShortSilenceDuration] = useState<number>(500);
     const [silenceThreshold, setSilenceThreshold] = useState<number>(-38);
@@ -33,18 +31,24 @@ export default function useAudioContext() {
     async function startListening(selectedAudioInput: string): Promise<void> {
         try {
             console.log('Starting to listen...');
+            
             inputStream.current = await navigator.mediaDevices.getUserMedia({
                 audio: { deviceId: selectedAudioInput ? { exact: selectedAudioInput } : undefined,  noiseSuppression: true, autoGainControl:true, echoCancellation: true }
             });
-            audioContext.current = new AudioContext();
+            if (!audioContext.current) {
+                audioContext.current = new AudioContext();
+            } else{
+                audioContext.current.resume();
+            }
             analyser.current = audioContext.current.createAnalyser();
-            const source: MediaStreamAudioSourceNode = audioContext.current.createMediaStreamSource(inputStream.current);
-            source.connect(analyser.current);
-
             analyser.current.fftSize = 2048;
             timeDomainDataArray.current = new Float32Array(analyser.current.fftSize);
             freqDataArray.current = new Float32Array(analyser.current.frequencyBinCount);
-            setIsListeningStatus(true);
+            
+            const source: MediaStreamAudioSourceNode = audioContext.current.createMediaStreamSource(inputStream.current);
+            source.connect(analyser.current);
+
+            setIsAudioContextActive(true);
             checkAudio();
             console.log('Listening started');
         } catch (error) {
@@ -56,8 +60,7 @@ export default function useAudioContext() {
     function stopListening(): void {
         console.log('Stopping listening...');
         if (audioContext.current) {
-            audioContext.current.close();
-            audioContext.current = null;
+            audioContext.current.suspend();
         }
         if (mediaRecorder.current && mediaRecorder.current.state !== 'inactive') {
             mediaRecorder.current.stop();
@@ -69,7 +72,7 @@ export default function useAudioContext() {
         if (longSilenceTimer.current) {
             clearTimeout(longSilenceTimer.current);
         }
-        setIsListeningStatus(false);
+        setIsAudioContextActive(false);
         isRecordingStatus.current = false;
         isPlaybackActive.current = false;
         setVolume(-Infinity);
@@ -84,22 +87,8 @@ export default function useAudioContext() {
     const checkAudio = useCallback(() => {
         // Cancel startup if audioContext is not set
         // This stops the recursive call to checkAudio
-        if (!analyser.current || !timeDomainDataArray.current || !freqDataArray.current) return;
+        if (!isAudioContextActive || !analyser.current || !timeDomainDataArray.current || !freqDataArray.current) return;
 
-        analyser.current.getFloatTimeDomainData(timeDomainDataArray.current);
-
-        //calculate the user's vocal frequencies so I can filter out extraneous noise
-        analyser.current.getFloatFrequencyData(freqDataArray.current);
-        const lowFreqIndex = Math.floor(freqDataArray.current.length * 0.1); // 10% of the array
-        const midFreqIndex = Math.floor(freqDataArray.current.length * 0.5); // 50%
-        const highFreqIndex = Math.floor(freqDataArray.current.length * 0.9); // 90%
-
-        console.log(
-            "Frequency Data Summary:",
-            "\nLow Freq:", freqDataArray.current[lowFreqIndex],
-            "\nMid Freq:", freqDataArray.current[midFreqIndex],
-            "\nHigh Freq:", freqDataArray.current[highFreqIndex]
-        );
         const rms: number = Math.sqrt(timeDomainDataArray.current.reduce((sum, val) => sum + val * val, 0) / timeDomainDataArray.current.length);
         const dbFS: number = 20 * Math.log10(rms);
         setVolume(dbFS);
@@ -130,7 +119,7 @@ export default function useAudioContext() {
             }
         }
 
-    }, [shortSilenceDuration, silenceThreshold]);
+    }, [shortSilenceDuration, silenceThreshold, isAudioContextActive]);
 
     // Where I calculate the min/max volume for dynamic silence thresholding
     function adjustMinMax(dbFS: number) {
@@ -169,21 +158,21 @@ export default function useAudioContext() {
     useEffect(() => {
         let intervalId: NodeJS.Timeout | null = null;
 
-        if (isListeningStatus) {
+        if (isAudioContextActive) {
             intervalId = setInterval(checkAudio, 50);
         }
 
         return () => {
             if (intervalId) clearInterval(intervalId);
         };
-    }, [isListeningStatus, checkAudio]);
+    }, [isAudioContextActive, checkAudio]);
 
     return {
         startListening,
         stopListening,
         volume,
         isRecordingStatus,
-        isListeningStatus,
+        isListeningStatus: isAudioContextActive,
         inputStream,
         audioContext,
         isPlaybackActive,
@@ -195,3 +184,22 @@ export default function useAudioContext() {
         silenceThreshold,
     };
 }
+/*
+Keeping this for if I want to play around with it at a later point
+
+analyser.current.getFloatTimeDomainData(timeDomainDataArray.current);
+
+//calculate the user's vocal frequencies so I can filter out extraneous noise
+analyser.current.getFloatFrequencyData(freqDataArray.current);
+const lowFreqIndex = Math.floor(freqDataArray.current.length * 0.1); // 10% of the array
+const midFreqIndex = Math.floor(freqDataArray.current.length * 0.5); // 50%
+const highFreqIndex = Math.floor(freqDataArray.current.length * 0.9); // 90%
+
+console.log(
+    "Frequency Data Summary:",
+    "\nLow Freq:", freqDataArray.current[lowFreqIndex],
+    "\nMid Freq:", freqDataArray.current[midFreqIndex],
+    "\nHigh Freq:", freqDataArray.current[highFreqIndex]
+);
+
+*/
