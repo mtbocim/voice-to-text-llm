@@ -10,7 +10,7 @@ import { Accordion, AccordionItem } from "@nextui-org/react";
 import useAudioContext from "@/hooks/useAudioContext";
 import useAudioRecorder from "@/hooks/useAudioRecorder";
 import useTTS from "@/hooks/useTTS";
-import useTranscriber from "@/hooks/useTransciber";
+import useSTT from "@/hooks/useSTT";
 import useLLM from "@/hooks/useLLM";
 
 const COLOR_MAP = {
@@ -27,7 +27,7 @@ function AdvancedAudioRecorder() {
         volume,
         isRecordingStatus,
         isListeningStatus,
-        isPlaybackActive,
+        // isPlaybackActive,
         silenceThreshold,
         shortSilenceDuration,
         inputStream,
@@ -37,43 +37,38 @@ function AdvancedAudioRecorder() {
     const { startRecording, stopRecording, speechToTextDataQueue } =
         useAudioRecorder();
 
-    const { processQueue, fetchingVoiceTranscription, isMidSentence, transcription } = useTranscriber();
+    const { processQueue, fetchingVoiceTranscription } = useSTT();
 
-    const { voice, setVoice, availableVoices, processTextStream } = useTTS();
-    const { chatContext, setChatContext, getResponse, getFeedbackResponse } = useLLM();
+    const { voice, setVoice, availableVoices, processTextStream, audioData } = useTTS(audioContext);
+    const { chatContext, setChatContext, getPrimaryResponse, getFeedbackResponse } = useLLM();
 
     // Updating UI (which includes audio playback), keep as state
     const [availableAudioDevices, setAvailableAudioDevices] = useState<
         MediaDeviceInfo[]
     >([]);
     const [selectedAudioInput, setSelectedAudioInput] = useState<string>("");
-    // const [fetchingVoiceTranscription, setFetchingVoiceTranscription] =
-    //     useState<boolean>(false);
-    const [processTranscription, setProcessTranscription] =
-        useState<boolean>(false);
+  
     const [feedback, setFeedback] = useState<string>("");
 
     // Keep as ref
-    const audioData = useRef<{ audioBuffer: AudioBuffer; text: string }[]>([]);
     const currentTranscription = useRef<string>("");
-    const spokenText = useRef<string>("");
 
     // Work in progress, trying to improve response flow
-    const isInMiddleOfSentence = useRef<boolean>(false);
+    const isMidSentence = useRef<boolean>(false);
     const blockRecording = useRef<boolean>(false);
 
-     /**
-     * Adds the current transcription to the chat and resets the transcription state
-     *
-     * Accepts the current transcription and adds it to the chat context
-     */
+    /**
+    * Adds the current transcription to the chat and resets the transcription state
+    *
+    * Accepts the current transcription and adds it to the chat context
+    */
     const handleLongSilence = useCallback(
         async function handleLongSilence(t: string): Promise<void> {
             console.log(
                 "Long silence detected. Sending full transcription for processing."
             );
             const currentMessage = { role: "user", content: t };
-            const response = await getResponse(currentMessage, chatContext);
+            const response = await getPrimaryResponse(currentMessage, chatContext);
             const feedbackResponse = getFeedbackResponse(currentMessage, chatContext);
             let processedText = await processTextStream(response, audioContext, audioData, voice, isRecordingStatus);
             if (processedText.trim() === "") {
@@ -91,7 +86,7 @@ function AdvancedAudioRecorder() {
             // console.log('Feedback:', feedbackData.text);
             setFeedback(feedbackData.text);
         },
-        [chatContext, processTextStream]
+        [chatContext, processTextStream, voice]
     );
 
 
@@ -108,65 +103,14 @@ function AdvancedAudioRecorder() {
         if (
             isRecordingStatus.current &&
             inputStream.current &&
-            !isPlaybackActive.current &&
+            // !isPlaybackActive.current &&
             !blockRecording.current
         ) {
             startRecording(inputStream.current);
         } else {
             stopRecording();
         }
-    }, [startRecording, stopRecording, isRecordingStatus, isPlaybackActive, inputStream]);
-
-    /**
-     * Plays the audio data
-     *
-     * Conditions for playing audio:
-     * - Audio data is available
-     * - Audio isn't already playing
-     * - There is an audio context
-     */
-    useEffect(() => {
-        // TODO: the playbackActiveRef changing might create small gaps where recording could be active
-
-        const playNextAudio = () => {
-            if (audioData.current.length > 0 && audioContext.current) {
-                console.log(
-                    "Audio data:",
-                    audioData.current.length,
-                    "Playback active:",
-                    isPlaybackActive.current
-                );
-                if (isPlaybackActive.current === false) {
-                    isPlaybackActive.current = true;
-                    const source = audioContext.current.createBufferSource();
-                    const currentAudioData = audioData.current.shift();
-                    if (currentAudioData) {
-                        source.buffer = currentAudioData.audioBuffer;
-                        source.connect(audioContext.current.destination);
-                        source.onended = () => {
-                            isPlaybackActive.current = false;
-                            console.log("Playback ended");
-                            playNextAudio(); // Play the next audio data
-                        };
-                        source.start();
-                        spokenText.current += currentAudioData.text;
-                    }
-                }
-            } else {
-                console.log(
-                    "Audio data:",
-                    audioData.current.length,
-                    "Playback active:",
-                    isPlaybackActive.current
-                );
-                isPlaybackActive.current = false;
-            }
-        };
-
-        if (audioData.current.length > 0 && !isPlaybackActive.current && !isRecordingStatus.current) {
-            playNextAudio();
-        }
-    }, [audioData.current.length, audioContext, isPlaybackActive, isRecordingStatus]);
+    }, [startRecording, stopRecording, isRecordingStatus, inputStream]);
 
     /********************************************************Data */
 
@@ -213,10 +157,10 @@ function AdvancedAudioRecorder() {
         async function processTranscript() {
             console.log(
                 "processTranscript\n",
-                "playbackActive",
-                isPlaybackActive.current,
-                "Send transcript:",
-                processTranscription,
+                // "playbackActive",
+                // isPlaybackActive.current,
+                "midSentence",
+                isMidSentence.current,
                 "Fetching data:",
                 fetchingVoiceTranscription,
                 "Current transcription:",
@@ -225,27 +169,24 @@ function AdvancedAudioRecorder() {
                 speechToTextDataQueue.current.length
             );
             if (
-                !isPlaybackActive.current &&
-                !isInMiddleOfSentence.current &&
-                processTranscription &&
+                // !isPlaybackActive.current &&
+                !isMidSentence.current &&
                 !fetchingVoiceTranscription &&
                 currentTranscription.current.length > 0 &&
                 speechToTextDataQueue.current.length === 0
             ) {
                 blockRecording.current = true;
                 await handleLongSilence(currentTranscription.current);
-                setProcessTranscription(false);
                 blockRecording.current = false;
             }
         }
         processTranscript();
     }, [
-        processTranscription,
         fetchingVoiceTranscription,
         handleLongSilence,
-        setProcessTranscription,
         speechToTextDataQueue,
-        isPlaybackActive,
+        // isPlaybackActive,
+        isMidSentence
     ]);
 
     /**
@@ -256,12 +197,17 @@ function AdvancedAudioRecorder() {
      * - I'm not already processing data
      */
     useEffect(() => {
+        async function getProcessedData() {
+            const result = await processQueue(speechToTextDataQueue.current);
+            isMidSentence.current = result.isMidSentence;
+            currentTranscription.current += " " + result.currentTranscription;
+        }
         if (
             speechToTextDataQueue.current.length > 0 &&
             !fetchingVoiceTranscription
         ) {
-            // setFetchingVoiceTranscription(true);
-            processQueue(speechToTextDataQueue.current);
+            console.log('getProcessedData');
+            getProcessedData();
         }
     }, [speechToTextDataQueue.current.length, fetchingVoiceTranscription]);
 

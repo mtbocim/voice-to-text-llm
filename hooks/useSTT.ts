@@ -1,19 +1,17 @@
 import getVoiceTranscription from "@/actions/getVoiceTranscription";
 import { useState } from "react";
 
-export default function useTranscriber() {
+export default function useSTT() {
     const [fetchingVoiceTranscription, setFetchingVoiceTranscription] = useState<boolean>(false);
-    const [isMidSentence, setIsMidSentence] = useState<boolean>(false);
-    const [transcription, setTranscription] = useState<string>("");
-
 
     /**
      * Currently this is using OpenAI/whisper-1 model
      */
-    async function processQueue(queue: Blob[]): Promise<string> {
+    async function processQueue(queue: Blob[]): Promise<{currentTranscription: string, isMidSentence: boolean}> {
         setFetchingVoiceTranscription(true);
         const queueToProcess = [...queue];
         let currentTranscription = '';
+        let isMidSentence = false;
         while (queueToProcess.length > 0) {
             const audioChunk = queue.shift() as Blob;
             if (!audioChunk) {
@@ -27,8 +25,6 @@ export default function useTranscriber() {
                 const results = await getVoiceTranscription(formData);
                 if (results) {
                     currentTranscription = currentTranscription + " " + results.newText
-                    // Possible point of sending STT data, not mandatory
-                    setIsMidSentence(!results.isMidSentence);
                 }
                 console.log("currentTranscription in processQueue:", results);
             } catch (error) {
@@ -38,8 +34,8 @@ export default function useTranscriber() {
             // Prompt check for if the user sounds like they have completed a thought
         }
         setFetchingVoiceTranscription(false);
-        return currentTranscription;
+        return {currentTranscription, isMidSentence };
     }
 
-    return { processQueue, fetchingVoiceTranscription, isMidSentence, transcription }
+    return { processQueue, fetchingVoiceTranscription }
 }

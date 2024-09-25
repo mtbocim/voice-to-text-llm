@@ -15,7 +15,7 @@ export default function useAudioContext() {
     const longSilenceTimer = useRef<NodeJS.Timeout | null>(null);
     const isRecordingStatus = useRef(false);
     const mediaRecorder = useRef<MediaRecorder | null>(null);
-    const isPlaybackActive = useRef(false);
+    // const isPlaybackActive = useRef(false);
 
     // Want to track min/max volume for dynamic thresholding
     const minVolumeSample = useRef<number[]>([-70]);
@@ -31,19 +31,19 @@ export default function useAudioContext() {
     async function startListening(selectedAudioInput: string): Promise<void> {
         try {
             console.log('Starting to listen...');
-            
+
             audioContext.current = new AudioContext();
-            
+
             inputStream.current = await navigator.mediaDevices.getUserMedia({
-                audio: { deviceId: selectedAudioInput ? { exact: selectedAudioInput } : undefined,  noiseSuppression: true, autoGainControl:true, echoCancellation: true }
+                audio: { deviceId: selectedAudioInput ? { exact: selectedAudioInput } : undefined, noiseSuppression: true, autoGainControl: true, echoCancellation: true }
             });
-            
+
             analyser.current = audioContext.current.createAnalyser();
             analyser.current.fftSize = 2048;
-            
+
             timeDomainDataArray.current = new Float32Array(analyser.current.fftSize);
             freqDataArray.current = new Float32Array(analyser.current.frequencyBinCount);
-            
+
             const source: MediaStreamAudioSourceNode = audioContext.current.createMediaStreamSource(inputStream.current);
             source.connect(analyser.current);
 
@@ -74,7 +74,7 @@ export default function useAudioContext() {
         }
         setIsAudioContextActive(false);
         isRecordingStatus.current = false;
-        isPlaybackActive.current = false;
+        // isPlaybackActive.current = false;
         setVolume(-Infinity);
         audioData.current = [];
         console.log('Listening stopped');
@@ -97,29 +97,28 @@ export default function useAudioContext() {
         adjustMinMax(dbFS);
 
         // Check if audio is playing before allowing user to start recording
-        if (!isPlaybackActive.current) {
-            if (dbFS < silenceThreshold) {
-                if (!silenceStartTime.current) {
-                    silenceStartTime.current = Date.now();
-                } else {
-                    const silenceDuration = Date.now() - silenceStartTime.current;
-
-                    if (silenceDuration > shortSilenceDuration && isRecordingStatus.current) {
-                        isRecordingStatus.current = false;
-                    }
-                }
+        if (dbFS < silenceThreshold) {
+            if (!silenceStartTime.current) {
+                silenceStartTime.current = Date.now();
             } else {
-                // Still talking, don't want to process transcript yet
-                if (silenceStartTime.current) {
-                    silenceStartTime.current = null;
+                const silenceDuration = Date.now() - silenceStartTime.current;
 
-                }
-                // Start recording if not already recording
-                if (!isRecordingStatus.current) {
-                    isRecordingStatus.current = true;
+                if (silenceDuration > shortSilenceDuration && isRecordingStatus.current) {
+                    isRecordingStatus.current = false;
                 }
             }
+        } else {
+            // Still talking, don't want to process transcript yet
+            if (silenceStartTime.current) {
+                silenceStartTime.current = null;
+
+            }
+            // Start recording if not already recording
+            if (!isRecordingStatus.current) {
+                isRecordingStatus.current = true;
+            }
         }
+
 
     }, [shortSilenceDuration, silenceThreshold]);
 
@@ -177,7 +176,6 @@ export default function useAudioContext() {
         isListeningStatus: isAudioContextActive,
         inputStream,
         audioContext,
-        isPlaybackActive,
         volumeAverages,
         // Will eventually be more or less hardcoded, and not needed to be passed around
         setShortSilenceDuration,

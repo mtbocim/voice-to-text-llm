@@ -1,20 +1,21 @@
-import React, { useCallback, useEffect } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 
 const OPENAI_VOICES = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"];
 
-export default function useTTS() {
+export default function useTTS(audioContext: React.MutableRefObject<AudioContext | null>) {
     const [availableVoices, setAvailableVoices] = React.useState<string[]>([]);
     const [voice, setVoice] = React.useState<string>('');
     
+    const audioData = useRef<{ audioBuffer: AudioBuffer; text: string }[]>([]);
+    const isAudioPlaying = useRef(false);
     // Get available voices from the ElevenLabs API, one call only
     useEffect(() => {
         async function fetchAvailableVoices() {
             const response = await fetch("https://api.elevenlabs.io/v1/voices");
             const data = await response.json();
-            setAvailableVoices(
-                data.voices.map((i: { voice_id: string; name: string }) => i.name)
-            );
-            setVoice(data.voices[0].name);
+            const voices = data.voices.map((i: { voice_id: string; name: string }) => i.name).sort()
+            setAvailableVoices(voices)
+            setVoice(voices[0]);
         }
         if (false) {
             setAvailableVoices(OPENAI_VOICES);
@@ -23,6 +24,7 @@ export default function useTTS() {
             fetchAvailableVoices();
         }
     }, []);
+
     async function getTextToVoice(
         priorText: string, 
         currentSentence: string, 
@@ -129,5 +131,52 @@ export default function useTTS() {
         return processedText;
     }, []);
 
-    return { voice, setVoice, availableVoices, processTextStream }
+    /**
+     * Plays the audio data
+     *
+     * Conditions for playing audio:
+     * - Audio data is available
+     * - Audio isn't already playing
+     * - There is an audio context
+     */
+    useEffect(() => {
+        // TODO: the playbackActiveRef changing might create small gaps where recording could be active
+
+        const playNextAudio = () => {
+            if (audioData.current.length > 0 && audioContext.current) {
+                console.log(
+                    "Audio data:",
+                    audioData.current.length,
+                    "Playback active:",
+                    isAudioPlaying.current
+                );
+                if (!isAudioPlaying.current) {
+                    isAudioPlaying.current = true;
+                    const source = audioContext.current.createBufferSource();
+                    const currentAudioData = audioData.current.shift();
+                    if (currentAudioData) {
+                        source.buffer = currentAudioData.audioBuffer;
+                        source.connect(audioContext.current.destination);
+                        source.onended = () => {
+                            isAudioPlaying.current = false;
+                            console.log("Playback ended");
+                            playNextAudio(); // Play the next audio data
+                        };
+                        source.start();
+                    }
+                }
+            } else {
+                console.log(
+                    "Audio data:",
+                    audioData.current.length,
+                );
+            }
+        };
+
+        if (audioData.current.length > 0 && isAudioPlaying.current === false) {
+            playNextAudio();
+        }
+    }, [audioData.current.length, audioContext]);
+
+    return { voice, setVoice, availableVoices, processTextStream, audioData }
 }
