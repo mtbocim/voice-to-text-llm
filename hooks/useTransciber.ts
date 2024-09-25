@@ -1,18 +1,25 @@
 import getVoiceTranscription from "@/actions/getVoiceTranscription";
 import { useState } from "react";
 
-export default function useTranscriber(){
+export default function useTranscriber() {
     const [fetchingVoiceTranscription, setFetchingVoiceTranscription] = useState<boolean>(false);
     const [isMidSentence, setIsMidSentence] = useState<boolean>(false);
     const [transcription, setTranscription] = useState<string>("");
 
-    async function processQueue(queue:Blob[], ): Promise<void> {
+
+    /**
+     * Currently this is using OpenAI/whisper-1 model
+     */
+    async function processQueue(queue: Blob[]): Promise<string> {
         setFetchingVoiceTranscription(true);
         const queueToProcess = [...queue];
         let currentTranscription = '';
         while (queueToProcess.length > 0) {
-            const formData = new FormData();
             const audioChunk = queue.shift() as Blob;
+            if (!audioChunk) {
+                break;
+            }
+            const formData = new FormData();
             formData.append("file", audioChunk, "audio.webm");
             formData.append("model", "whisper-1");
             formData.append("previousTranscript", currentTranscription);
@@ -31,7 +38,7 @@ export default function useTranscriber(){
             // Prompt check for if the user sounds like they have completed a thought
         }
         setFetchingVoiceTranscription(false);
-        setTranscription(currentTranscription);
+        return currentTranscription;
     }
 
     return { processQueue, fetchingVoiceTranscription, isMidSentence, transcription }

@@ -1,7 +1,28 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect } from 'react';
 
-export default function useCreateVoiceResponse() {
+const OPENAI_VOICES = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"];
 
+export default function useTTS() {
+    const [availableVoices, setAvailableVoices] = React.useState<string[]>([]);
+    const [voice, setVoice] = React.useState<string>('');
+    
+    // Get available voices from the ElevenLabs API, one call only
+    useEffect(() => {
+        async function fetchAvailableVoices() {
+            const response = await fetch("https://api.elevenlabs.io/v1/voices");
+            const data = await response.json();
+            setAvailableVoices(
+                data.voices.map((i: { voice_id: string; name: string }) => i.name)
+            );
+            setVoice(data.voices[0].name);
+        }
+        if (false) {
+            setAvailableVoices(OPENAI_VOICES);
+            setVoice(OPENAI_VOICES[0]);
+        } else {
+            fetchAvailableVoices();
+        }
+    }, []);
     async function getTextToVoice(
         priorText: string, 
         currentSentence: string, 
@@ -108,5 +129,5 @@ export default function useCreateVoiceResponse() {
         return processedText;
     }, []);
 
-    return { getTextToVoice, processTextStream }
+    return { voice, setVoice, availableVoices, processTextStream }
 }

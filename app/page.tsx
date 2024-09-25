@@ -9,16 +9,15 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import { Accordion, AccordionItem } from "@nextui-org/react";
 import useAudioContext from "@/hooks/useAudioContext";
 import useAudioRecorder from "@/hooks/useAudioRecorder";
-import useCreateVoiceResponse from "@/hooks/useTTS";
+import useTTS from "@/hooks/useTTS";
 import useTranscriber from "@/hooks/useTransciber";
+import useLLM from "@/hooks/useLLM";
 
 const COLOR_MAP = {
     user: "bg-blue-200",
     assistant: "bg-green-200",
     feedback: "bg-yellow-200",
 };
-
-const OPENAI_VOICES = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"];
 
 function AdvancedAudioRecorder() {
     const {
@@ -40,18 +39,14 @@ function AdvancedAudioRecorder() {
 
     const { processQueue, fetchingVoiceTranscription, isMidSentence, transcription } = useTranscriber();
 
-    const { processTextStream } = useCreateVoiceResponse();
+    const { voice, setVoice, availableVoices, processTextStream } = useTTS();
+    const { chatContext, setChatContext, getResponse, getFeedbackResponse } = useLLM();
 
     // Updating UI (which includes audio playback), keep as state
-    const [chatContext, setChatContext] = useState<
-        { role: string; content: string }[]
-    >([]);
     const [availableAudioDevices, setAvailableAudioDevices] = useState<
         MediaDeviceInfo[]
     >([]);
     const [selectedAudioInput, setSelectedAudioInput] = useState<string>("");
-    const [availableTTSVoices, setAvailableVoices] = useState<string[]>([]);
-    const [selectedTTSVoice, setVoice] = useState<string>("");
     // const [fetchingVoiceTranscription, setFetchingVoiceTranscription] =
     //     useState<boolean>(false);
     const [processTranscription, setProcessTranscription] =
@@ -78,21 +73,9 @@ function AdvancedAudioRecorder() {
                 "Long silence detected. Sending full transcription for processing."
             );
             const currentMessage = { role: "user", content: t };
-            const response = await fetch("/api/generateTextResponse", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({ messages: [...chatContext, currentMessage] }),
-            });
-            const feedbackResponse = fetch("/api/generateFeedbackResponse", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({ messages: [...chatContext, currentMessage] }),
-            });
-            let processedText = await processTextStream(response, audioContext, audioData, selectedTTSVoice, isRecordingStatus);
+            const response = await getResponse(currentMessage, chatContext);
+            const feedbackResponse = getFeedbackResponse(currentMessage, chatContext);
+            let processedText = await processTextStream(response, audioContext, audioData, voice, isRecordingStatus);
             if (processedText.trim() === "") {
                 // Placeholder until I have a better idea of why an empty string would be generated as a response
                 processedText = "...";
@@ -212,24 +195,6 @@ function AdvancedAudioRecorder() {
         };
     }, []);
 
-    // Get available voices from the ElevenLabs API, one call only
-    useEffect(() => {
-        async function fetchAvailableVoices() {
-            const response = await fetch("https://api.elevenlabs.io/v1/voices");
-            const data = await response.json();
-            setAvailableVoices(
-                data.voices.map((i: { voice_id: string; name: string }) => i.name)
-            );
-            setVoice(data.voices[0].name);
-        }
-        if (false) {
-            setAvailableVoices(OPENAI_VOICES);
-            setVoice(OPENAI_VOICES[0]);
-        } else {
-            fetchAvailableVoices();
-        }
-    }, []);
-
     /******************************************************************************Speech to text */
     /**
      * Handles sending the user transcript to the STT API for processing
@@ -321,11 +286,11 @@ function AdvancedAudioRecorder() {
                 <div className="mb-4">
                     <label className="block mb-2">Select Voice:</label>
                     <select
-                        value={selectedTTSVoice}
+                        value={voice}
                         onChange={(e) => setVoice(e.target.value)}
                         className="w-full p-2 border rounded"
                     >
-                        {availableTTSVoices.map((voice) => (
+                        {availableVoices.map((voice) => (
                             <option key={voice} value={voice}>
                                 {voice}
                             </option>

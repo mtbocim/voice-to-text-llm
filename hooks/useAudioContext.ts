@@ -32,16 +32,15 @@ export default function useAudioContext() {
         try {
             console.log('Starting to listen...');
             
+            audioContext.current = new AudioContext();
+            
             inputStream.current = await navigator.mediaDevices.getUserMedia({
                 audio: { deviceId: selectedAudioInput ? { exact: selectedAudioInput } : undefined,  noiseSuppression: true, autoGainControl:true, echoCancellation: true }
             });
-            if (!audioContext.current) {
-                audioContext.current = new AudioContext();
-            } else{
-                audioContext.current.resume();
-            }
+            
             analyser.current = audioContext.current.createAnalyser();
             analyser.current.fftSize = 2048;
+            
             timeDomainDataArray.current = new Float32Array(analyser.current.fftSize);
             freqDataArray.current = new Float32Array(analyser.current.frequencyBinCount);
             
@@ -60,7 +59,8 @@ export default function useAudioContext() {
     function stopListening(): void {
         console.log('Stopping listening...');
         if (audioContext.current) {
-            audioContext.current.suspend();
+            audioContext.current.close();
+            audioContext.current = null;
         }
         if (mediaRecorder.current && mediaRecorder.current.state !== 'inactive') {
             mediaRecorder.current.stop();
@@ -87,7 +87,9 @@ export default function useAudioContext() {
     const checkAudio = useCallback(() => {
         // Cancel startup if audioContext is not set
         // This stops the recursive call to checkAudio
-        if (!isAudioContextActive || !analyser.current || !timeDomainDataArray.current || !freqDataArray.current) return;
+        if (!analyser.current || !timeDomainDataArray.current || !freqDataArray.current) return;
+
+        analyser.current.getFloatTimeDomainData(timeDomainDataArray.current);
 
         const rms: number = Math.sqrt(timeDomainDataArray.current.reduce((sum, val) => sum + val * val, 0) / timeDomainDataArray.current.length);
         const dbFS: number = 20 * Math.log10(rms);
@@ -119,7 +121,7 @@ export default function useAudioContext() {
             }
         }
 
-    }, [shortSilenceDuration, silenceThreshold, isAudioContextActive]);
+    }, [shortSilenceDuration, silenceThreshold]);
 
     // Where I calculate the min/max volume for dynamic silence thresholding
     function adjustMinMax(dbFS: number) {
